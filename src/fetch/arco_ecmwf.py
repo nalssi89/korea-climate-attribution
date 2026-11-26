@@ -1,8 +1,11 @@
-"""ECMWF ARCO Zarr(인증 필요)로 Google 원시 자료보다 더 최근 날짜를 채운다.
+"""ECMWF ARCO Zarr(인증 필요): Google 원시 자료보다 더 최근 날짜 보충과 겹치는 날의 교차 검증.
 
-주의: 이 모듈은 `CDSAPI_KEY`가 없는 환경에서 작성돼 실제 접속으로 검증하지 못했다.
-Google ARCO-ERA5 원시 자료가 닿지 않는 최근 며칠만 보충하는 용도로 쓰고,
-실패하면 경고만 남기고 넘어간다 (전체 흐름은 Google 경로만으로 완결된다).
+2026-11-26 실제 접속으로 확인한 사실
+- 기압면 저장소(timeChunked)는 13개 층(1000~50 hPa)뿐이라 10·30 hPa가 없다. 그래서 성층권 항목까지 갖춘
+  하루 파일을 이 경로만으로는 만들 수 없다. 보충은 10·30 hPa가 저장소에 생길 때만 시도한다.
+- 기압면 끝 시각이 Google ARCO-ERA5 원시 자료보다 하루쯤 이르다 (확인 시점 2026-11-19 18 UTC).
+- 지상 저장소에는 해빙(siconc)이 없다.
+그래서 이 경로는 주로 Google 경로로 만든 최근 하루 파일을 독립 자료와 비교하는 데 쓴다.
 """
 from __future__ import annotations
 
@@ -67,6 +70,35 @@ def fetch_day(date: dt.date, stores: dict) -> None:
     atomic_to_netcdf(ds, out)
 
 
+def coverage() -> dict:
+    """저장소의 끝 시각과 층 목록 (상태 보고용)."""
+    st = {k: _open(k) for k in STORES}
+    pl = st["PL"]
+    return dict(pl_end=str(pl.time.values[-1])[:16], sl_end=str(st["SL"].time.values[-1])[:16],
+                levels=[int(v) for v in pl.level.values], has_siconc=bool({"siconc", "ci"} & set(st["SL"].data_vars)))
+
+
+def cross_check(date: dt.date) -> dict:
+    """Google 경로로 만든 하루 파일과 ECMWF ARCO 같은 날 값(1.5° 상자 평균)을 비교한다."""
+    from ..common import box_regrid, box_weights_lat, box_weights_lon
+    st = {k: _open(k) for k in STORES}
+    mine = xr.open_dataset(A.day_path(date))
+    rows = {}
+    for key, kind, var, lev, scale in (("z500", "PL", "z", 500, 1 / C.G), ("t850", "PL", "t", 850, 1.0),
+                                       ("u250", "PL", "u", 250, 1.0), ("msl", "SL", "msl", None, 0.01)):
+        da = st[kind][var].sel(time=[np.datetime64(f"{date}T{h:02d}:00") for h in A.H6])
+        if lev:
+            da = da.sel(level=lev)
+        da = da.load().assign_coords(longitude=lambda d: d.longitude % 360).sortby("longitude").sortby("latitude", ascending=False)
+        a = da.values.mean(0)[: A._rows(0, 90)[1] + 1] * scale
+        r = box_regrid(a, box_weights_lat(A.LAT_SRC[: a.shape[0]], C.LAT_NH), box_weights_lon(A.LON_SRC, C.LON))
+        b = mine[key].values[0]
+        d = r - b
+        rows[key] = dict(bias=round(float(d.mean()), 4), rmse=round(float(np.sqrt((d ** 2).mean())), 4),
+                         corr=round(float(np.corrcoef(r.ravel(), b.ravel())[0, 1]), 6))
+    return dict(date=str(date), fields=rows)
+
+
 def extend(after: dt.date, until: dt.date) -> dt.date:
     """after 다음 날부터 until까지 하루씩 채우고, 채운 마지막 날짜를 돌려준다."""
     if not has_key("CDSAPI_KEY") or until <= after:
@@ -74,6 +106,11 @@ def extend(after: dt.date, until: dt.date) -> dt.date:
     last = after
     try:
         stores = {k: _open(k) for k in STORES}
+        need = {int(it.path.split("/")[2].split(".")[0]) for it in A.items() if it.path.startswith("PL")}
+        missing = sorted(need - {int(v) for v in stores["PL"].level.values})
+        if missing:
+            log.info("ECMWF ARCO 기압면에 %s hPa가 없어 하루 파일 보충을 건너뛴다", missing)
+            return after
         d = after + dt.timedelta(days=1)
         while d <= until:
             fetch_day(d, stores)

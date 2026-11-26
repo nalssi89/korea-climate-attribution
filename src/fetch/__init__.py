@@ -43,7 +43,8 @@ def run(end: dt.date | None = None) -> dt.date:
     from . import arco_ecmwf, arco_raw, kma, merge, noaa, wb2
     status = {
         "CDSAPI_KEY": "있음" if has_key("CDSAPI_KEY") else "없음",
-        "KMA_API_KEY": "있음" if has_key("KMA_API_KEY") else "없음",
+        "KMA_API_KEY": "있음" if has_key("KMA_API_KEY") else
+                       ("없음 (같은 용도의 KMA_AUTHKEY 있음)" if has_key("KMA_AUTHKEY") else "없음"),
         "storage.googleapis.com": "도달" if _reachable("https://storage.googleapis.com/weatherbench2/") else "차단",
         "arco.datastores.ecmwf.int": "도달" if _reachable(C.ECMWF_ARCO) else "차단",
         "apihub.kma.go.kr": "도달" if _reachable(C.KMA_HUB) else "차단",
@@ -59,14 +60,24 @@ def run(end: dt.date | None = None) -> dt.date:
         google_end = end
     arco_raw.run(google_end)
     final = google_end
-    if (end is None or end > google_end) and status["arco.datastores.ecmwf.int"] == "도달":
-        want = end or (dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=5))
-        final = arco_ecmwf.extend(google_end, want)
-    status["ECMWF ARCO"] = (f"보충 {google_end} → {final}" if final > google_end else
-                            "쓰지 않음 (키 없음, 도메인 차단, 또는 보충할 날짜 없음)")
+    status["ECMWF ARCO"] = "쓰지 않음 (키 없음 또는 도메인 차단)"
+    if has_key("CDSAPI_KEY") and status["arco.datastores.ecmwf.int"] == "도달":
+        try:
+            cov = arco_ecmwf.coverage()
+            status["ECMWF ARCO 범위"] = cov
+            if end is None or end > google_end:
+                want = end or dt.date.fromisoformat(cov["pl_end"][:10])
+                final = arco_ecmwf.extend(google_end, want)
+            chk = arco_ecmwf.cross_check(min(final, dt.date.fromisoformat(cov["pl_end"][:10])) - dt.timedelta(days=1))
+            status["ECMWF ARCO 교차 검증"] = chk
+            status["ECMWF ARCO"] = (f"보충 {google_end} → {final}" if final > google_end else
+                                    f"보충 없음: 기압면 {cov['pl_end']}까지, 층 {cov['levels'][-1]}~{cov['levels'][0]} hPa "
+                                    "(10·30 hPa 없음). Google 원시 자료가 더 최근이다. 겹치는 날로 교차 검증만 함")
+        except Exception as e:      # 키가 틀렸거나 저장소 구조가 바뀐 경우. 예외 문자열에 키는 들어가지 않는다
+            status["ECMWF ARCO"] = f"실패: {type(e).__name__}"
     land_fraction()
-    status["KMA ASOS"] = kma.run(final) if status["apihub.kma.go.kr"] == "도달" or has_key("KMA_API_KEY") \
-        else "건너뜀: 환경변수 KMA_API_KEY 없음, apihub.kma.go.kr 차단"
+    status["KMA ASOS"] = kma.run(final) if status["apihub.kma.go.kr"] == "도달" \
+        else "건너뜀: apihub.kma.go.kr 차단"
     status["NOAA ONI"] = noaa.run()
     merge.build(final)
     status["자료 끝 날짜"] = str(final)

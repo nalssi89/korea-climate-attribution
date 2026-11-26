@@ -86,7 +86,7 @@ def _pcap_year(ds: xr.Dataset, year: int) -> str:
 
 
 def _strat_year(ds37: xr.Dataset, year: int) -> str:
-    """10 hPa 60°N 동서평균 동서풍, 10·30 hPa 극관 고도, 10 hPa 고도장(1.5°로 내삽)."""
+    """10 hPa 60°N 동서평균 동서풍, 10·30 hPa 극관 고도, 10 hPa 고도장·기온장(1.5°로 내삽)."""
     out = C.DATA / "wb2" / "strat" / f"{year}.nc"
     if out.exists():
         return "skip"
@@ -99,9 +99,12 @@ def _strat_year(ds37: xr.Dataset, year: int) -> str:
     z10 = z.sel(level=10, drop=True).transpose("time", "latitude", "longitude")
     z10 = z10.interp(latitude=C.LAT_NH, longitude=C.LON, kwargs={"fill_value": None})
     z10 = z10.rename(latitude="lat", longitude="lon")
+    t10 = ds37["temperature"].sel(level=10, time=ts, drop=True).load().transpose("time", "latitude", "longitude")
+    t10 = t10.interp(latitude=C.LAT_NH, longitude=C.LON, kwargs={"fill_value": None})
+    t10 = t10.rename(latitude="lat", longitude="lon")
     ds = xr.Dataset({"u1060": u60.astype("float32"),
                      "pcap": cap.transpose("time", "level").astype("float32"),
-                     "z10": z10.astype("float32")})
+                     "z10": z10.astype("float32"), "t10": t10.astype("float32")})
     atomic_to_netcdf(ds, out)
     return "ok"
 

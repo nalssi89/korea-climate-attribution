@@ -66,6 +66,7 @@ def items() -> list[Item]:
     for name, (var, lev) in C.PL_FIELDS.items():
         out.append(Item(name, f"PL/{var}/{lev}.nc", H6, nh, "nh"))
     out.append(Item("z10", "PL/geopotential/10.nc", H6, nh, "nh"))
+    out.append(Item("t10", "PL/temperature/10.nc", H6, nh, "nh"))
     field_levs = {500, 250, 10}
     for lev in C.PCAP_LEVELS:
         if lev not in field_levs:

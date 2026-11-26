@@ -1,14 +1,16 @@
 """기상청 API 허브에서 ASOS 일자료(평균기온, 일강수량)를 받는다.
 
-주의: `KMA_API_KEY`가 없고 apihub.kma.go.kr이 막힌 환경에서 작성돼 실제 응답으로 검증하지 못했다.
-키는 환경변수로만 읽고, 요청 주소(키 포함)는 로그에 남기지 않는다.
-월 단위 파일로 저장하고 이미 있는 달은 건너뛴다.
+키는 환경변수 `KMA_API_KEY`로 읽는다. 클라우드 환경에 따라 같은 키가 `KMA_AUTHKEY`라는 이름으로만
+설정된 경우가 있어 그 이름도 받아 준다. 요청 주소(키 포함)와 예외 문자열은 로그에 남기지 않는다.
+서버가 연결을 끊는 일이 잦아 요청마다 몇 번 다시 시도한다.
+연 단위 파일로 저장하고 이미 다 받은 해는 건너뛴다 (요청 한 건의 지연이 커서 달보다 해 단위가 훨씬 빠르다).
+진행 중인 해는 실행할 때마다 끝 날짜까지 다시 받는다.
 """
 from __future__ import annotations
 
 import datetime as dt
-import io
 import os
+import time
 
 import numpy as np
 import pandas as pd
@@ -45,38 +47,56 @@ def _parse(text: str) -> pd.DataFrame:
     return df.dropna(subset=["date"])
 
 
-def _month_file(y: int, m: int):
-    return C.DATA / "kma" / f"asos_{y}{m:02d}.csv"
+KEY_NAMES = ("KMA_API_KEY", "KMA_AUTHKEY")
+
+
+def key_name() -> str | None:
+    """설정된 키 환경변수의 이름(값이 아님)."""
+    return next((n for n in KEY_NAMES if has_key(n)), None)
+
+
+def _get(params: dict, tries: int = 5) -> requests.Response:
+    last = None
+    for k in range(tries):
+        try:
+            r = requests.get(URL, timeout=300, params=params | {"authKey": os.environ[key_name()]})
+            r.raise_for_status()
+            return r
+        except requests.RequestException as e:
+            last = type(e).__name__
+            time.sleep(2 * 2 ** k)
+    raise RuntimeError(last)
+
+
+def _year_file(y: int):
+    return C.DATA / "kma" / f"asos_{y}.csv"
 
 
 def run(end: dt.date) -> str:
     """돌려주는 값은 상태 문자열 (보고서에 그대로 적는다)."""
-    if not has_key("KMA_API_KEY"):
-        return "건너뜀: 환경변수 KMA_API_KEY 없음"
-    months = pd.period_range(f"{C.START_YEAR}-01", end.strftime("%Y-%m"), freq="M")
+    if key_name() is None:
+        return "건너뜀: 환경변수 KMA_API_KEY(또는 KMA_AUTHKEY) 없음"
     got = 0
-    for p in months:
-        f = _month_file(p.year, p.month)
-        complete = p.end_time.date() <= end
+    for y in range(C.START_YEAR, end.year + 1):
+        f = _year_file(y)
+        complete = dt.date(y, 12, 31) <= end
         if f.exists() and complete:
             continue
-        t2 = min(p.end_time.date(), end)
+        t2 = min(dt.date(y, 12, 31), end)
         try:
-            r = requests.get(URL, timeout=120, params={
-                "tm1": f"{p.year}{p.month:02d}01", "tm2": t2.strftime("%Y%m%d"), "stn": 0, "help": 0,
-                "authKey": os.environ["KMA_API_KEY"]})
-            r.raise_for_status()
-        except requests.RequestException as e:   # 예외 문자열에 주소(키)가 들어갈 수 있어 종류만 남긴다
-            return f"중단: KMA API 허브 요청 실패 ({type(e).__name__}), {got}개월 새로 받음"
+            r = _get({"tm1": f"{y}0101", "tm2": t2.strftime("%Y%m%d"), "stn": 0, "help": 0})
+        except RuntimeError as e:   # 예외 문자열에 주소(키)가 들어갈 수 있어 종류만 남긴다
+            return f"중단: KMA API 허브 요청 실패 ({e}), {got}개 해 새로 받음 (다시 실행하면 이어받음)"
         df = _parse(r.text)
         if df.empty:
-            return f"중단: {p} 응답을 해석하지 못함, {got}개월 새로 받음"
+            return f"중단: {y}년 응답을 해석하지 못함, {got}개 해 새로 받음"
         f.parent.mkdir(parents=True, exist_ok=True)
         tmp = f.with_suffix(".csv.part")
         df.to_csv(tmp, index=False)
         tmp.rename(f)
         got += 1
-    return f"완료: {got}개월 새로 받음"
+        log.info("KMA ASOS %d년 받음 (%d개 지점)", y, df.stn.nunique())
+    return f"완료: {got}개 해 새로 받음 (키 이름 {key_name()})"
 
 
 def national_daily() -> pd.DataFrame | None:

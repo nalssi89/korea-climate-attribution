@@ -42,9 +42,15 @@ def _wb2_strat(last_year: int) -> xr.Dataset:
     s = _wb2("strat", last_year)
     low = _wb2("pcap", last_year).pcap
     pcap = xr.concat([s.pcap, low], "level").sel(level=C.PCAP_LEVELS)
-    # 512x256 격자는 극점이 없어 90°N 줄이 빈다. 극점 값은 88.5°N 동서평균으로 채운다.
-    z10 = s.z10.where(s.z10.lat < 90, s.z10.sel(lat=88.5).mean("lon"))
-    return xr.Dataset({"u1060": s.u1060, "pcap": pcap.transpose("time", "level"), "z10": z10})
+    out = xr.Dataset({"u1060": s.u1060, "pcap": pcap.transpose("time", "level")})
+    for n in C.STRAT_FIELDS:
+        out[n] = _fill_pole(s[n])
+    return out
+
+
+def _fill_pole(da: xr.DataArray) -> xr.DataArray:
+    """512x256 격자는 극점이 없어 90°N 줄이 빈다. 극점 값은 88.5°N 동서평균으로 채운다."""
+    return da.where(da.lat < 90, da.sel(lat=88.5).mean("lon"))
 
 
 def build(end: dt.date) -> None:
@@ -59,7 +65,7 @@ def build(end: dt.date) -> None:
     arco = _arco(days)
     strat_w = _wb2_strat(C.WB2_LAST_YEAR)
     for name in C.ALL_FIELDS:
-        w = strat_w[name] if name == "z10" else _wb2(name, C.WB2_LAST_YEAR)[name]
+        w = strat_w[name] if name in C.STRAT_FIELDS else _wb2(name, C.WB2_LAST_YEAR)[name]
         a = arco[name].rename(dict(zip(DIMS.get(name, ("lat", "lon")), ("lat", "lon"))))
         a = _round(a).sel(lat=w.lat, lon=w.lon)
         da = xr.concat([w, a], "time").astype("float32").rename(name)
@@ -82,7 +88,7 @@ def validate(arco: xr.Dataset) -> pd.DataFrame:
     rows = []
     wst = xr.open_dataset(C.DATA / "wb2" / "strat" / f"{y}.nc")
     for name in C.ALL_FIELDS:
-        w = _round(wst.z10.where(wst.z10.lat < 90, wst.z10.sel(lat=88.5).mean("lon")) if name == "z10" else xr.open_dataset(C.DATA / "wb2" / name / f"{y}.nc")[name]).sel(time=sl)
+        w = _round(_fill_pole(wst[name]) if name in C.STRAT_FIELDS else xr.open_dataset(C.DATA / "wb2" / name / f"{y}.nc")[name]).sel(time=sl)
         a = _round(a_all[name].rename(dict(zip(DIMS.get(name, ("lat", "lon")), ("lat", "lon"))))).sel(lat=w.lat, lon=w.lon).values
         d = a - w.values
         ok = np.isfinite(d)
