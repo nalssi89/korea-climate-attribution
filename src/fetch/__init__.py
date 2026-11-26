@@ -63,7 +63,13 @@ def run(end: dt.date | None = None) -> dt.date:
     wb2.run()
     from . import cds_monthly
     status["CDS 월평균 지면온도"] = cds_monthly.run(wait=False)   # CDS 요청 1건. 끝난 뒤에 다음 CDS 요청(최근 날짜 보충)을 넣는다
-    cds_free = not cds_monthly.busy()                              # 아직 대기열에 있으면 이번 실행에서는 CDS를 더 쓰지 않는다
+    from . import cds_jobs
+    queued = cds_jobs.pending() if has_key("CDSAPI_KEY") else []
+    # 월평균 요청이나 지난 실행에서 넣은 일별 보충 요청이 아직 대기열에 있으면, 이번 실행에서는 CDS를 더 쓰지 않는다.
+    # 대기 중인 작업은 끝난 뒤 다음 실행에서 새로 넣지 않고 이어받는다.
+    cds_free = not cds_monthly.busy() and not queued
+    if queued:
+        status["CDS 대기열"] = f"끝나지 않은 작업 {len(queued)}건: 이번 실행에서는 CDS 보충을 건너뛰고 다음 실행에서 이어받는다"
     latest = arco_raw.latest_complete_date()
     if end is None or end > latest:
         if end is not None:

@@ -15,6 +15,7 @@ import xarray as xr
 
 from .. import config as C
 from ..common import atomic_to_netcdf, get_logger, has_key
+from . import cds_jobs
 
 log = get_logger("fetch.cds_monthly")
 RAW = C.DATA / "cds" / "monthly_skt_stl1_raw.nc"
@@ -65,58 +66,6 @@ def _wait_other(max_wait_s: int = 7200) -> None:
     LOCK.unlink(missing_ok=True)
 
 
-API = "https://cds.climate.copernicus.eu/api/retrieve/v1"
-
-
-def _get(path: str, **kw):
-    import requests
-    r = requests.get(f"{API}/{path}", headers={"PRIVATE-TOKEN": os.environ["CDSAPI_KEY"]}, timeout=60, **kw)
-    r.raise_for_status()
-    return r.json()
-
-
-def _existing_job() -> str | None:
-    """같은 요청이 이미 CDS 대기열에 있거나 끝나 있으면 그 작업 번호를 돌려준다.
-    컨테이너가 다시 시작돼 기다리던 프로세스가 끊겨도, 새 요청을 넣지 않고 그 작업을 이어 기다린다."""
-    try:
-        jobs = _get("jobs", params={"limit": 20}).get("jobs", [])
-    except Exception as e:      # 목록 조회가 안 되면 새 요청 경로로 간다
-        log.warning("CDS 작업 목록 조회 실패: %s", type(e).__name__)
-        return None
-    for j in jobs:
-        if j.get("processID") != DATASET or j.get("status") not in ("accepted", "running", "successful"):
-            continue
-        try:
-            req = _get(f"jobs/{j['jobID']}", params={"request": "true"})["metadata"]["request"]["ids"]
-        except Exception:
-            continue
-        if sorted(req.get("variable", [])) == sorted(VARS.values()) and req.get("grid") == [1.5, 1.5]:
-            return j["jobID"]
-    return None
-
-
-def _wait_job(jid: str, dest, max_wait_s: int = 6 * 3600) -> None:
-    """이미 넣은 CDS 작업이 끝날 때까지 기다렸다가 결과 파일을 dest로 받는다."""
-    import time
-    import requests
-    t0 = time.time()
-    while True:
-        st = _get(f"jobs/{jid}")["status"]
-        if st == "successful":
-            break
-        if st in ("failed", "rejected", "dismissed", "deleted"):
-            raise RuntimeError(f"CDS 작업 상태 {st}")
-        if time.time() - t0 > max_wait_s:
-            raise TimeoutError("CDS 작업이 끝나지 않았다")
-        time.sleep(60)
-    href = _get(f"jobs/{jid}/results")["asset"]["value"]["href"]
-    with requests.get(href, stream=True, timeout=600) as r:
-        r.raise_for_status()
-        with open(dest, "wb") as f:
-            for chunk in r.iter_content(1 << 20):
-                f.write(chunk)
-
-
 def run(today: dt.date | None = None, wait: bool = True) -> str:
     """wait=False면 다른 프로세스가 요청 중일 때 기다리지 않고 '요청 중'을 돌려준다 (그동안 다른 CDS 요청도 넣지 않는다)."""
     today = today or dt.datetime.now(dt.timezone.utc).date()
@@ -130,14 +79,19 @@ def run(today: dt.date | None = None, wait: bool = True) -> str:
         return "건너뜀: CDSAPI_KEY 없음"
     RAW.parent.mkdir(parents=True, exist_ok=True)
     tmp = RAW.with_suffix(".part")
-    jid = _existing_job()
+    req = {"product_type": ["monthly_averaged_reanalysis"], "variable": list(VARS.values()),
+           "year": [str(y) for y in range(C.START_YEAR, today.year + 1)],
+           "month": [f"{m:02d}" for m in range(1, 13)], "time": ["00:00"],
+           "area": [90, 0, 0, 358.5], "grid": [1.5, 1.5],
+           "data_format": "netcdf", "download_format": "unarchived"}
+    jid = cds_jobs.find(DATASET, {"variable": req["variable"], "grid": req["grid"]})
     if jid is not None:
-        if not wait and _get(f"jobs/{jid}")["status"] != "successful":
+        if not wait and cds_jobs.status(jid) != "successful":
             return "요청 중 (같은 요청이 CDS 대기열에 있음, 다음 실행에서 반영)"
         LOCK.write_text(str(os.getpid()))
         log.info("이미 넣은 CDS 작업을 이어 기다린다 (새 요청을 넣지 않음)")
         try:
-            _wait_job(jid, tmp)
+            cds_jobs.wait(jid, tmp)
         except Exception as e:
             log.warning("CDS 월평균 작업 받기 실패: %s", type(e).__name__)
             return f"실패: {type(e).__name__}"
@@ -145,11 +99,6 @@ def run(today: dt.date | None = None, wait: bool = True) -> str:
             LOCK.unlink(missing_ok=True)
         return _finish(tmp)
     import cdsapi
-    req = {"product_type": ["monthly_averaged_reanalysis"], "variable": list(VARS.values()),
-           "year": [str(y) for y in range(C.START_YEAR, today.year + 1)],
-           "month": [f"{m:02d}" for m in range(1, 13)], "time": ["00:00"],
-           "area": [90, 0, 0, 358.5], "grid": [1.5, 1.5],
-           "data_format": "netcdf", "download_format": "unarchived"}
     cl = cdsapi.Client(url="https://cds.climate.copernicus.eu/api", key=os.environ["CDSAPI_KEY"], quiet=True, progress=False)
     LOCK.write_text(str(os.getpid()))
     log.info("CDS 요청 1건: %s %s, %d~%d년 월평균, 북반구 1.5°", DATASET, list(VARS), C.START_YEAR, today.year)
