@@ -1,0 +1,13 @@
+numpy
+pandas
+xarray
+zarr
+gcsfs
+obstore
+h5py
+netCDF4
+scipy
+matplotlib
+cartopy
+koreanize-matplotlib
+requests
