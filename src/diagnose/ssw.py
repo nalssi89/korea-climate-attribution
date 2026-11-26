@@ -115,6 +115,29 @@ def downward(pch: xr.DataArray, d0: pd.Timestamp, end: pd.Timestamp, thr: float 
     return rows
 
 
+def downward_after(pch: xr.DataArray, d0: pd.Timestamp, end: pd.Timestamp, thr: float = 1.0) -> dict:
+    """발생 이후의 하향 전파 판정.
+
+    층별로 발생일 이후 5일 평균 극관 고도 편차가 +thr σ 이상인 첫날을 찾는다.
+    하향 전파 확인: 500 hPa 이하 층이 발생 이후 +thr σ 이상이 되고, 그 날짜가 10 hPa보다 늦거나 같을 때.
+    발생 전의 동시 상승(모든 층이 며칠 사이에 함께 오르는 것)은 대류권 강제 신호로 보고 하향 전파로 세지 않는다.
+    """
+    sm = pch.rolling(time=5, center=True, min_periods=3).mean()
+    rows = []
+    for lev in C.PCAP_LEVELS:
+        s = sm.sel(level=lev).to_series()[d0:end]
+        hit = s[s >= thr]
+        rows.append(dict(level=int(lev), first=str(hit.index[0].date()) if len(hit) else None,
+                         lag=int((hit.index[0] - d0).days) if len(hit) else None,
+                         max=float(s.max()), max_date=str(s.idxmax().date()), last=float(s.iloc[-1])))
+    by = {r["level"]: r for r in rows}
+    top = by.get(10)
+    low = [r for r in rows if r["level"] >= 500 and r["first"] is not None]
+    confirmed = bool(top and top["first"] is not None and low and min(r["lag"] for r in low) >= top["lag"])
+    reached = max((r["level"] for r in low), default=None)
+    return dict(rows=rows, confirmed=confirmed, lowest_level=reached, elapsed=int((end - d0).days))
+
+
 def after_effects(df: pd.DataFrame, d0: pd.Timestamp, end: pd.Timestamp) -> dict:
     out = {}
     for k in AFTER_KEYS:
@@ -193,9 +216,21 @@ def sentences(case: dict) -> list[str]:
              f"발생 전 30일 우랄 블로킹일 {p['blocked_days_30']}일, 5일 이상 우랄블로킹 사건 {len(p['ural_events'])}건"
              + ("".join(f" ({e['onset']} 시작, {e['duration']}일, 발생 {e['lead_days']}일 전)" for e in p["ural_events"])) + ".")
     dw = [r for r in d["downward"] if r["level"] in (10, 100, 500, 1000)]
-    S.append("하향 전파(5일 평균 극관 고도 편차가 처음 +1σ 이상): " + ", ".join(
+    lags = [r["lag"] for r in d["downward"] if r["first"] and r["level"] <= 500]
+    S.append("발생 전후 극관 고도 편차(5일 평균)가 처음 +1σ 이상이 된 날: " + ", ".join(
         f"{r['level']} hPa " + (f"{r['first']}(발생 {r['lag']:+d}일)" if r["first"] else f"미도달(최대 {r['max']:+.1f}σ)")
-        for r in dw) + ".")
+        for r in dw) + "."
+        + (f" 10~500 hPa가 {max(lags) - min(lags)}일 사이에 함께 올랐고 모두 발생 전이므로, 하향 전파가 아니라 "
+           "대류권 강제(블로킹 등)와 함께 나타난 동시 상승 신호로 본다." if lags and max(lags) < 0 and max(lags) - min(lags) <= 5 else ""))
+    da = d.get("downward_after")
+    if da:
+        lo = {r["level"]: r for r in da["rows"]}
+        tail = ", ".join(f"{lv} hPa 최대 {lo[lv]['max']:+.1f}σ" for lv in (500, 850, 1000) if lv in lo)
+        if da["confirmed"]:
+            S.append(f"발생 후 하향 전파: 확인됨. 발생 이후 {da['lowest_level']} hPa까지 +1σ 이상이 내려왔다 ({tail}).")
+        else:
+            S.append(f"발생 후 하향 전파: 발생 {da['elapsed']}일 뒤(자료 끝)까지 500 hPa 이하에서는 +1σ에 이르지 않아 "
+                     f"아직 확인되지 않는다 ({tail}). 지표 영향은 보통 수 주~두 달에 걸쳐 나타나므로 날짜를 늘려 다시 판정해야 한다.")
     a = d["after"]
     S.append(f"발생 후 {d['elapsed']}일(끝 날짜까지) 평균: " + ", ".join(
         f"{AFTER_KEYS[k][0]} {a[k]['post']:+.2f} {AFTER_KEYS[k][1]}({N.sigma_word(a[k]['post_sigma'])})"
@@ -241,7 +276,7 @@ def analyze(df: pd.DataFrame, end, rng) -> dict:
                      anom_sigma=float(an.max() / day_sigma(df.t10_cap_anom, an.idxmax())),
                      rise7_max=float(rise.max()), grad_max=float(df.t10_grad[d0 - pd.Timedelta(days=10):d0 + pd.Timedelta(days=10)].max())),
             vortex=classify_vortex(df, d0), precursors=precursors(df, d0, ub),
-            downward=downward(pch, d0, end), after=after_effects(df, d0, end),
+            downward=downward(pch, d0, end), downward_after=downward_after(pch, d0, end), after=after_effects(df, d0, end),
             history=history(df, ssw, d0, end, rng), elapsed=int((end - d0).days))
         case["title"] = f"{d0.year}년 {d0.month}월 성층권 돌연승온"
     else:
