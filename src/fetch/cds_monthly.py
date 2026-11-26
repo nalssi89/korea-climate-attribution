@@ -84,9 +84,15 @@ def run(today: dt.date | None = None, wait: bool = True) -> str:
            "month": [f"{m:02d}" for m in range(1, 13)], "time": ["00:00"],
            "area": [90, 0, 0, 358.5], "grid": [1.5, 1.5],
            "data_format": "netcdf", "download_format": "unarchived"}
-    jid = cds_jobs.find(DATASET, {"variable": req["variable"], "grid": req["grid"]})
+    # 연도 범위까지 같아야 같은 요청으로 본다. 그래야 해가 바뀐 뒤 지난해 범위로 끝난 작업을 다시 받아 오래된 자료가 남는 일이 없다
+    jid = cds_jobs.find(DATASET, {"variable": req["variable"], "grid": req["grid"], "year": req["year"]})
     if jid is not None:
-        if not wait and cds_jobs.status(jid) != "successful":
+        try:
+            done = cds_jobs.status(jid) == "successful"
+        except Exception as e:      # 상태 조회가 안 되면 이번 실행에서는 기다리지 않는다
+            log.warning("CDS 작업 상태 조회 실패: %s", type(e).__name__)
+            done = False
+        if not wait and not done:
             return "요청 중 (같은 요청이 CDS 대기열에 있음, 다음 실행에서 반영)"
         LOCK.write_text(str(os.getpid()))
         log.info("이미 넣은 CDS 작업을 이어 기다린다 (새 요청을 넣지 않음)")
