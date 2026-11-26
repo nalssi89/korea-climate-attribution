@@ -204,7 +204,7 @@ def schematic_file(df: pd.DataFrame, end: pd.Timestamp, case: dict, days: int = 
             if name == "swvl1":      # 토양수분은 육지에서만 뜻이 있다
                 lf = xr.open_dataarray(C.DATA / "static" / "landfrac_nh.nc").reindex(lat=da.lat, lon=da.lon, method="nearest")
                 da = da.where(lf >= C.LAND_MIN)
-            put(key, da.sel(lat=slice(0, 90)).isel(**s3), unit, scale)
+            put(key, da.sel(lat=slice(21, 84) if name == "swvl1" else slice(0, 90)).isel(**s3), unit, scale)
     # 파동활동 플럭스: 날마다 앞뒤 3일(7일) 평균 편차로 계산, 6° 간격
     fx, fy = [], []
     for t in times:
