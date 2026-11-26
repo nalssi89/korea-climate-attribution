@@ -197,6 +197,14 @@ def schematic_file(df: pd.DataFrame, end: pd.Timestamp, case: dict, days: int = 
         land = lf >= C.LAND_MIN
         put("snowc", sc.where(land).sel(lat=slice(21, 84)).isel(**s3), "비율", 0.01)
         put("snowc_clim", sc_clim.where(land).sel(lat=slice(21, 84)).isel(**s3), "비율", 0.01)
+    # 지상 면 변수 선택용 (일별 장이 있을 때만): 표층 토양수분, 지표기온(skin temperature)
+    for key, name, unit, scale in (("swvl1_anom", "swvl1", "m³/m³", 0.002), ("skt_anom", "skt", "°C", 0.2)):
+        if (C.DATA / "merged" / f"{name}.nc").exists():
+            da = daily(name)
+            if name == "swvl1":      # 토양수분은 육지에서만 뜻이 있다
+                lf = xr.open_dataarray(C.DATA / "static" / "landfrac_nh.nc").reindex(lat=da.lat, lon=da.lon, method="nearest")
+                da = da.where(lf >= C.LAND_MIN)
+            put(key, da.sel(lat=slice(0, 90)).isel(**s3), unit, scale)
     # 파동활동 플럭스: 날마다 앞뒤 3일(7일) 평균 편차로 계산, 6° 간격
     fx, fy = [], []
     for t in times:

@@ -343,14 +343,10 @@ function drawJet(dark, ink) {
   if (today.jet) label(`제트 최대 ${top.v.toFixed(0)} m/s`, xyz(top.lat + 4, top.lon, R.jet + 0.04), "jet", dark ? "#ffc46b" : "#a8235a");
 }
 
-// --- 500 hPa: 고도 편차(면 + 60 m 간격 등치선), 파동활동 플럭스(화살표), 블로킹
+// --- 500 hPa: 고도 편차(면), 파동활동 플럭스(화살표), 블로킹
 function drawMid(dark, ink, warm, cool) {
   const Z = fine("z500_anom");
-  groups.mid.add(shell(Z, R.mid, divFn(240, 0.75, 0.15)));
-  const pos = [], neg = [];
-  for (let L = 60; L <= 480; L += 60) { pos.push(...contour(Z, L)); neg.push(...contour(Z, -L)); }
-  groups.mid.add(thinLines(pos, R.mid + 0.001, dark ? 0xf6b7a8 : 0x8c1c1d, 0.85));
-  groups.mid.add(thinLines(neg, R.mid + 0.001, dark ? 0x9dc8f7 : 0x0e3d7e, 0.85));
+  groups.mid.add(shell(Z, R.mid, divFn(240, 0.8, 0.15)));
   // 편차 중심 표시 (±120 m 이상, 30° 이상 떨어진 것 최대 6개)
   const ex = extrema(Z, 120, 30, 6);
   for (const p of ex) label(`${p.v > 0 ? "+" : "−"}${Math.abs(p.v).toFixed(0)}`, xyz(p.lat, p.lon, R.mid + 0.02), "mid", p.v > 0 ? warm : cool, "sm");
@@ -369,10 +365,29 @@ function drawMid(dark, ink, warm, cool) {
   if (ser("blocked") >= 1) label(`우랄 블로킹 (Z500 ${V.sgn(ser("ural"), 0, " m")})`, xyz(66, 60, R.mid + 0.06), "mid", warm);
 }
 
-// --- 지상·해양: 육지 2 m 기온 편차, 해수면온도 편차, 해면기압 편차 등치선과 고·저기압 중심, 해빙 경계
+// --- 지상·해양: 면은 고른 변수의 편차, 선은 해면기압 편차 등치선과 고·저기압 중심, 해빙·눈덮임 경계
+// 해빙·눈덮임·토양수분은 '줄면 빨강(따뜻한 쪽), 늘면 파랑'이 되게 부호를 뒤집어 칠한다.
+const SFC_VARS = {
+  t: { name: "기온 (육지 2 m 기온 + 해수면온도)", need: ["t2m_anom", "sst_anom"], range: "육지 ±8 °C · 바다 ±2.5 °C" },
+  skt: { name: "지표기온 (skin temperature)", need: ["skt_anom"], range: "±8 °C", vmax: 8 },
+  ci: { name: "해빙 농도", need: ["ci", "ci_clim"], range: "±40 %p (줄면 빨강)", vmax: 0.4, flip: true },
+  snow: { name: "눈덮임 비율", need: ["snowc", "snowc_clim"], range: "±60 %p (줄면 빨강)", vmax: 0.6, flip: true },
+  swvl1: { name: "토양수분 (표층 0~7 cm)", need: ["swvl1_anom"], range: "±0.08 m³/m³ (마르면 빨강)", vmax: 0.08, flip: true },
+};
+let sfcVar = "t";
+const sfcOK = (k) => SFC_VARS[k].need.every(has);
+function sfcField(k) {
+  if (k === "ci" || k === "snow") { const a = k === "ci" ? "ci" : "snowc"; return map2(fine(a), fine(a + "_clim"), (x, c) => x - c); }
+  return fine(k + "_anom");
+}
 function drawSfc(dark, ink, warm, cool) {
-  if (has("sst_anom")) groups.sfc.add(shell(fine("sst_anom"), R.sfc + 0.001, divFn(2.5, 0.85, 0.12)));
-  if (has("t2m_anom")) groups.sfc.add(shell(fine("t2m_anom"), R.sfc + 0.002, divFn(8, 0.85, 0.1)));
+  if (sfcVar === "t") {
+    if (has("sst_anom")) groups.sfc.add(shell(fine("sst_anom"), R.sfc + 0.001, divFn(2.5, 0.85, 0.12)));
+    if (has("t2m_anom")) groups.sfc.add(shell(fine("t2m_anom"), R.sfc + 0.002, divFn(8, 0.85, 0.1)));
+  } else if (sfcOK(sfcVar)) {
+    const s = SFC_VARS[sfcVar], fn = divFn(s.vmax, 0.88, 0.1);
+    groups.sfc.add(shell(sfcField(sfcVar), R.sfc + 0.002, s.flip ? (v) => fn(-v) : fn));
+  }
   if (has("msl_anom")) {
     const M = fine("msl_anom"), hi = [], lo = [];
     for (let L = 4; L <= 32; L += 4) { hi.push(...contour(M, L)); lo.push(...contour(M, -L)); }
@@ -445,9 +460,9 @@ function keys() {
     ["제트 250 hPa", jetBar(), `${JET_MIN} ~ ${JET_TOP}+ m/s`,
       `면: 풍속 ${JET_MIN} m/s 이상. <b>굵은 주황 선</b>: ${JET_MIN} m/s 등풍속선, 가는 보라 선: 70 m/s. 화살표: 경도 10°마다 제트 축의 바람 방향.`],
     ["500 hPa", divBar(), "−240 ~ +240 m",
-      "면: 고도 편차(작은 편차는 투명). 선: 60 m 간격(빨강 +, 파랑 −). 숫자: 편차 중심. 검은 화살표: 7일 평균 파동활동 플럭스(Takaya-Nakamura, 상위 35%)."],
-    ["지상·해양", divBar(), "육지 ±8 °C · 바다 ±2.5 °C",
-      "면: 육지 2 m 기온 편차와 해수면온도 편차. 선: 해면기압 편차 4 hPa 간격, H/L: 편차 중심(hPa). " +
+      "면: 고도 편차(작은 편차는 투명, 빨강 + 파랑 −). 숫자: ±120 m 넘는 편차 중심(m). 검은 화살표: 7일 평균 파동활동 플럭스(Takaya-Nakamura, 상위 35%)."],
+    ["지상·해양", divBar(), SFC_VARS[sfcVar].range,
+      `면: ${SFC_VARS[sfcVar].name} 편차(1991~2020 평년 대비). 선: 해면기압 편차 4 hPa 간격(빨강 +, 파랑 −), H/L: 해면기압 편차 중심(hPa). ` +
       (has("ci") ? "<b>청록 굵은 선</b>: 해빙 경계(농도 15%), 가는 선: 평년 경계. " : "") +
       (has("snowc") ? "<b>보라 굵은 선</b>: 눈덮임 경계(50%), 가는 선: 평년. " : "")],
     ["극관 기둥", divBar(), "−3 ~ +3 σ", "층별(1000~10 hPa) 극관 고도 표준화 편차. 위에서 아래로 번지면 하향 전파."],
@@ -528,7 +543,10 @@ function loop(ts) {
   for (const cb of document.querySelectorAll("[data-l]")) cb.onchange = () => { groups[cb.dataset.l].visible = cb.checked; };
   for (const b of document.querySelectorAll("[data-f]")) b.onclick = () => focus(b.dataset.f);
   $("gapSel").onchange = (e) => { gap = +e.target.value; setR(); draw(); };
-  const missing = ["t10_anom", "v250", "ci", "snowc"].filter((k) => !has(k));
+  const sel = $("sfcSel");
+  sel.innerHTML = Object.entries(SFC_VARS).map(([k, s]) => `<option value="${k}"${sfcOK(k) || k === "t" ? "" : " disabled"}>지상: ${s.name.split(" (")[0]}${sfcOK(k) || k === "t" ? "" : " (자료 준비 중)"}</option>`).join("");
+  sel.onchange = (e) => { sfcVar = e.target.value; draw(); keys(); };
+  const missing = ["t10_anom", "v250", "t2m(북반구)", "ci", "snowc", "swvl1_anom", "skt_anom"].filter((k) => k === "t2m(북반구)" ? !(has("t2m_anom") && F.t2m_anom.lat0 < 10) : !has(k));
   $("notes").textContent = `자료 ${D.start} ~ ${D.end}. 높이는 과장했다(10 hPa 약 31 km를 지구 반지름의 0.32배로). 격자는 3차 보간으로 부드럽게 그렸다.` +
     (missing.length ? ` 이번 자료에 없는 항목: ${missing.join(", ")} (다음 갱신에 추가).` : "");
   setTheme(document.documentElement.dataset.theme || "");
