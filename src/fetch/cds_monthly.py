@@ -3,6 +3,7 @@
 WeatherBench2 일평균에는 지면온도가 없어서, 강제인자 분석의 '지면온도' 항목만 이 월평균 자료로 만든다.
 요청은 한 건뿐이고, 다른 CDS 요청과 겹치지 않게 fetch.run에서 순서대로 부른다.
 이미 받은 파일이 있으면 다시 받지 않는다. 다만 파일의 마지막 달이 너무 오래됐으면(90일 넘게) 새로 받는다.
+같은 요청이 이미 CDS 대기열에 있으면(컨테이너가 다시 시작돼 기다리던 프로세스가 끊긴 경우) 새로 넣지 않고 그 작업을 이어 받는다.
 """
 from __future__ import annotations
 
@@ -64,6 +65,58 @@ def _wait_other(max_wait_s: int = 7200) -> None:
     LOCK.unlink(missing_ok=True)
 
 
+API = "https://cds.climate.copernicus.eu/api/retrieve/v1"
+
+
+def _get(path: str, **kw):
+    import requests
+    r = requests.get(f"{API}/{path}", headers={"PRIVATE-TOKEN": os.environ["CDSAPI_KEY"]}, timeout=60, **kw)
+    r.raise_for_status()
+    return r.json()
+
+
+def _existing_job() -> str | None:
+    """같은 요청이 이미 CDS 대기열에 있거나 끝나 있으면 그 작업 번호를 돌려준다.
+    컨테이너가 다시 시작돼 기다리던 프로세스가 끊겨도, 새 요청을 넣지 않고 그 작업을 이어 기다린다."""
+    try:
+        jobs = _get("jobs", params={"limit": 20}).get("jobs", [])
+    except Exception as e:      # 목록 조회가 안 되면 새 요청 경로로 간다
+        log.warning("CDS 작업 목록 조회 실패: %s", type(e).__name__)
+        return None
+    for j in jobs:
+        if j.get("processID") != DATASET or j.get("status") not in ("accepted", "running", "successful"):
+            continue
+        try:
+            req = _get(f"jobs/{j['jobID']}", params={"request": "true"})["metadata"]["request"]["ids"]
+        except Exception:
+            continue
+        if sorted(req.get("variable", [])) == sorted(VARS.values()) and req.get("grid") == [1.5, 1.5]:
+            return j["jobID"]
+    return None
+
+
+def _wait_job(jid: str, dest, max_wait_s: int = 6 * 3600) -> None:
+    """이미 넣은 CDS 작업이 끝날 때까지 기다렸다가 결과 파일을 dest로 받는다."""
+    import time
+    import requests
+    t0 = time.time()
+    while True:
+        st = _get(f"jobs/{jid}")["status"]
+        if st == "successful":
+            break
+        if st in ("failed", "rejected", "dismissed", "deleted"):
+            raise RuntimeError(f"CDS 작업 상태 {st}")
+        if time.time() - t0 > max_wait_s:
+            raise TimeoutError("CDS 작업이 끝나지 않았다")
+        time.sleep(60)
+    href = _get(f"jobs/{jid}/results")["asset"]["value"]["href"]
+    with requests.get(href, stream=True, timeout=600) as r:
+        r.raise_for_status()
+        with open(dest, "wb") as f:
+            for chunk in r.iter_content(1 << 20):
+                f.write(chunk)
+
+
 def run(today: dt.date | None = None, wait: bool = True) -> str:
     """wait=False면 다른 프로세스가 요청 중일 때 기다리지 않고 '요청 중'을 돌려준다 (그동안 다른 CDS 요청도 넣지 않는다)."""
     today = today or dt.datetime.now(dt.timezone.utc).date()
@@ -75,15 +128,29 @@ def run(today: dt.date | None = None, wait: bool = True) -> str:
             return f"이미 있음 ({str(ds.time.values[0])[:7]}~{str(ds.time.values[-1])[:7]})"
     if not has_key("CDSAPI_KEY"):
         return "건너뜀: CDSAPI_KEY 없음"
-    import cdsapi
     RAW.parent.mkdir(parents=True, exist_ok=True)
+    tmp = RAW.with_suffix(".part")
+    jid = _existing_job()
+    if jid is not None:
+        if not wait and _get(f"jobs/{jid}")["status"] != "successful":
+            return "요청 중 (같은 요청이 CDS 대기열에 있음, 다음 실행에서 반영)"
+        LOCK.write_text(str(os.getpid()))
+        log.info("이미 넣은 CDS 작업을 이어 기다린다 (새 요청을 넣지 않음)")
+        try:
+            _wait_job(jid, tmp)
+        except Exception as e:
+            log.warning("CDS 월평균 작업 받기 실패: %s", type(e).__name__)
+            return f"실패: {type(e).__name__}"
+        finally:
+            LOCK.unlink(missing_ok=True)
+        return _finish(tmp)
+    import cdsapi
     req = {"product_type": ["monthly_averaged_reanalysis"], "variable": list(VARS.values()),
            "year": [str(y) for y in range(C.START_YEAR, today.year + 1)],
            "month": [f"{m:02d}" for m in range(1, 13)], "time": ["00:00"],
            "area": [90, 0, 0, 358.5], "grid": [1.5, 1.5],
            "data_format": "netcdf", "download_format": "unarchived"}
     cl = cdsapi.Client(url="https://cds.climate.copernicus.eu/api", key=os.environ["CDSAPI_KEY"], quiet=True, progress=False)
-    tmp = RAW.with_suffix(".part")
     LOCK.write_text(str(os.getpid()))
     log.info("CDS 요청 1건: %s %s, %d~%d년 월평균, 북반구 1.5°", DATASET, list(VARS), C.START_YEAR, today.year)
     try:
@@ -93,6 +160,11 @@ def run(today: dt.date | None = None, wait: bool = True) -> str:
         return f"실패: {type(e).__name__}"
     finally:
         LOCK.unlink(missing_ok=True)
+    return _finish(tmp)
+
+
+def _finish(tmp) -> str:
+    """받은 원파일을 변수별 lat/lon/time 형태로 정리해 OUT에 쓴다."""
     tmp.rename(RAW)
     ds = xr.open_dataset(RAW)
     tname = "valid_time" if "valid_time" in ds.dims else "time"
