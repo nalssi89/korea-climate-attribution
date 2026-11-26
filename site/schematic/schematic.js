@@ -442,6 +442,22 @@ function hud() {
     `<b>지수</b> AO ${V.sgn(ser("ao"), 2)} · Niño3.4 ${V.sgn(ser("nino34"), 2, "°C")} · 한반도 기온 ${V.sgn(ser("korea_t"), 1, "°C")}` +
     (mk.length ? `<br><span class="ev">● ${mk.join(", ")}</span>` : "");
   $("slider").value = T;
+  const [lo, hi] = range, inR = T >= lo && T <= hi;
+  $("rangeInfo").textContent = `재생 구간 ${dateOf(lo)} ~ ${dateOf(hi)} (${hi - lo + 1}일) · 지금 ${d}` +
+    (inR ? ` (${T - lo + 1}일째)` : " (구간 밖: 재생하면 구간 첫날부터)");
+  playLabel();
+}
+
+// 재생: 구간 끝에 있거나 구간 밖이면 첫날부터, 아니면 지금 날짜부터 이어서
+function playLabel() {
+  const [lo, hi] = range;
+  $("playBtn").textContent = playing ? "❚❚ 정지" : T >= hi || T < lo ? "▶ 첫날부터 재생" : "▶ 이어서 재생";
+  $("playBtn").setAttribute("aria-pressed", playing);
+}
+function setPlay(on) {
+  const [lo, hi] = range;
+  if (on && (T >= hi || T < lo)) { T = lo; draw(); }
+  playing = on; lastTick = performance.now(); playLabel();
 }
 
 // ---------------------------------------------------------------- 범례
@@ -455,8 +471,8 @@ function keys() {
   const t10 = has("t10_anom");
   const rows = [
     ["성층권 10 hPa", divBar(), t10 ? "−20 ~ +20 K" : "−1500 ~ +1500 m",
-      (t10 ? "면: 기온 편차(빨강 = 승온). " : "면: 극소용돌이 가장자리보다 낮은 곳(파랑)·높은 곳(빨강). ") +
-      "가는 선: 고도 400 m 간격. <b>굵은 파란 선</b>: 극소용돌이 가장자리(그날 평년 60°N 평균 고도). 60°N 고리: 동서풍(빨강 = 동풍 역전)."],
+      (t10 ? "면: 기온 편차(빨강 = 승온). " : "면: 극소용돌이 안쪽(가장자리보다 고도가 낮은 곳, 진할수록 깊음). ") +
+      "가는 선: 고도 600 m 간격. <b>굵은 파란 선</b>: 극소용돌이 가장자리(그날 평년 60°N 평균 고도). 60°N 고리: 동서풍(빨강 = 동풍 역전)."],
     ["제트 250 hPa", jetBar(), `${JET_MIN} ~ ${JET_TOP}+ m/s`,
       `면: 풍속 ${JET_MIN} m/s 이상. <b>굵은 주황 선</b>: ${JET_MIN} m/s 등풍속선, 가는 보라 선: 70 m/s. 화살표: 경도 10°마다 제트 축의 바람 방향.`],
     ["500 hPa", divBar(), "−240 ~ +240 m",
@@ -505,8 +521,10 @@ const proj = new THREE.Vector3();
 function loop(ts) {
   requestAnimationFrame(loop);
   if (playing && ts - lastTick > 1000 / +$("speedSel").value) {
-    lastTick = ts; const lo = range ? range[0] : 0, hi = range ? range[1] : D.n - 1;
-    T = T >= hi || T < lo ? lo : T + 1; draw();
+    lastTick = ts; const [lo, hi] = range;
+    if (T >= hi) { if ($("loopChk").checked) T = lo; else setPlay(false); }   // 끝나면 멈춘다(반복을 켜면 첫날로)
+    else T = T < lo ? lo : T + 1;
+    draw();
   }
   place(); renderer.render(scene, camera);
   const w = stage.clientWidth, h = stage.clientHeight, camDir = camera.position.clone().normalize();
@@ -528,16 +546,23 @@ function loop(ts) {
   baseLayer();
   $("slider").max = D.n - 1;
   const q = new URLSearchParams(location.search), idx = (d) => Math.round((Date.parse(d + "T00:00:00Z") - Date.parse(D.start + "T00:00:00Z")) / 864e5);
+  // 재생 구간 목록: (대시보드에서 넘어온 기간) · 전체 자료 · 최근 30일 · 최근 7일
+  const ranges = [];
   if (q.get("start") && q.get("end")) {
     const a = Math.max(0, idx(q.get("start"))), b = Math.min(D.n - 1, idx(q.get("end")));
-    if (b >= a && b >= 0) { range = [a, b]; T = b; $("rangeInfo").textContent = `대시보드 기간 ${q.get("start")} ~ ${q.get("end")} (재생은 이 구간 반복)`; }
+    if (b >= a && b >= 0) ranges.push({ t: `대시보드 기간 ${dateOf(a)} ~ ${dateOf(b)}`, r: [a, b] });
   }
-  if (!range) { T = D.n - 1; $("rangeInfo").textContent = `${D.start} ~ ${D.end} (${D.n}일)`; }
+  ranges.push({ t: `전체 자료 ${D.start} ~ ${D.end} (${D.n}일)`, r: [0, D.n - 1] });
+  for (const n of [30, 7]) if (D.n > n) ranges.push({ t: `최근 ${n}일 ${dateOf(D.n - n)} ~ ${D.end}`, r: [D.n - n, D.n - 1] });
+  range = ranges[0].r; T = range[1];   // 처음 화면은 구간 마지막 날, 재생은 구간 첫날부터
+  $("rangeSel").innerHTML = ranges.map((o, i) => `<option value="${i}">재생 구간: ${o.t}</option>`).join("");
+  $("rangeSel").onchange = (e) => { range = ranges[+e.target.value].r; playing = false; T = range[0]; draw(); };
   const tk = $("ticks"), pct = (i) => (i / (D.n - 1)) * 100 + "%";
   for (const m of D.marks) { const i = idx(m.date); if (i < 0 || i >= D.n) continue; const s = document.createElement("span"); s.className = m.kind; s.style.left = pct(i); s.textContent = m.kind === "ssw" ? "SSW" : "블로킹"; s.title = `${m.date} ${m.label}`; tk.appendChild(s); }
-  if (range) for (const i of range) { const s = document.createElement("span"); s.className = "sel"; s.style.left = pct(i); s.textContent = i === range[0] ? "시작" : "끝"; tk.appendChild(s); }
   $("slider").oninput = (e) => { T = +e.target.value; draw(); };
-  $("playBtn").onclick = () => { playing = !playing; $("playBtn").textContent = playing ? "❚❚ 정지" : "▶ 재생"; $("playBtn").setAttribute("aria-pressed", playing); };
+  $("playBtn").onclick = () => setPlay(!playing);
+  $("firstBtn").onclick = () => { setPlay(false); T = range[0]; draw(); };
+  $("lastBtn").onclick = () => { setPlay(false); T = range[1]; draw(); };
   const jump = (s) => { T = Math.max(0, Math.min(D.n - 1, T + s * +$("jumpSel").value)); draw(); };
   $("backBtn").onclick = () => jump(-1); $("fwdBtn").onclick = () => jump(1);
   for (const cb of document.querySelectorAll("[data-l]")) cb.onchange = () => { groups[cb.dataset.l].visible = cb.checked; };

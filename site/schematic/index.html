@@ -42,12 +42,17 @@
 </div></header>
 <main class="wrap">
   <div class="bar" style="margin-top:14px">
-    <button type="button" id="playBtn" aria-label="재생">▶ 재생</button>
-    <select id="speedSel" aria-label="속도"><option value="1">1일/초</option><option value="3" selected>3일/초</option><option value="6">6일/초</option></select>
-    <select id="jumpSel" aria-label="건너뛰기 단위"><option value="1">1일</option><option value="5" selected>반순(5일)</option><option value="7">주(7일)</option><option value="30">월(30일)</option></select>
-    <button type="button" id="backBtn" aria-label="뒤로">◀◀</button><button type="button" id="fwdBtn" aria-label="앞으로">▶▶</button>
-    <span class="pill" id="rangeInfo"></span>
+    <select id="rangeSel" aria-label="재생 구간"></select>
+    <button type="button" id="firstBtn" title="재생 구간 첫날로">⏮ 첫날</button>
+    <button type="button" id="backBtn" title="건너뛰기 단위만큼 뒤로">◀◀</button>
+    <button type="button" id="playBtn">▶ 재생</button>
+    <button type="button" id="fwdBtn" title="건너뛰기 단위만큼 앞으로">▶▶</button>
+    <button type="button" id="lastBtn" title="재생 구간 마지막 날로">끝 ⏭</button>
+    <select id="speedSel" aria-label="재생 속도"><option value="1">속도 1일/초</option><option value="3" selected>속도 3일/초</option><option value="6">속도 6일/초</option></select>
+    <select id="jumpSel" aria-label="건너뛰기 단위"><option value="1">건너뛰기 1일</option><option value="5" selected>건너뛰기 반순(5일)</option><option value="7">건너뛰기 주(7일)</option><option value="30">건너뛰기 30일</option></select>
+    <label class="small"><input type="checkbox" id="loopChk"> 반복</label>
   </div>
+  <div class="small" id="rangeInfo" style="margin:-4px 0 6px"></div>
   <input type="range" id="slider" min="0" max="0" value="0" aria-label="날짜" style="width:100%">
   <div class="ticks" id="ticks"></div>
   <div class="bar" role="group" aria-label="한 층만 보기">
@@ -60,7 +65,7 @@
       <button type="button" data-f="sfc" aria-pressed="false">지상·해양</button>
     </span>
     <select id="sfcSel" aria-label="지상 면 변수"></select>
-    <select id="gapSel" aria-label="층 간격"><option value="1" selected>층 간격 보통</option><option value="1.8">층 간격 넓게</option></select>
+    <select id="gapSel" aria-label="층 간격"><option value="0.5">층 간격 좁게</option><option value="1" selected>층 간격 보통</option><option value="1.8">층 간격 넓게</option></select>
     <button type="button" id="resetBtn">시점 초기화</button>
   </div>
   <div id="stage"><div class="hud" id="hud">자료 불러오는 중…</div></div>
