@@ -18,7 +18,7 @@ from ..common import atomic_to_netcdf, get_logger
 log = get_logger("fetch.wb2")
 WB2_SFC = {"msl": "mean_sea_level_pressure", "t2m": "2m_temperature",
            "tp": "total_precipitation_24hr", "sst": "sea_surface_temperature",
-           "ci": "sea_ice_cover"}
+           "ci": "sea_ice_cover", "sd": "snow_depth", "swvl1": "volumetric_soil_water_layer_1"}
 
 
 def _open(url: str) -> xr.Dataset:
@@ -48,14 +48,23 @@ def convert_units(name: str, da: xr.DataArray) -> xr.DataArray:
 def subset(name: str, da: xr.DataArray) -> xr.DataArray:
     if name == "sst":
         return da.sel(lat=slice(C.LAT_SST[0], 90))
-    if name in ("t2m", "tp"):
+    if name == "tp":
         return da.sel(lat=slice(*C.EA_LAT), lon=slice(*C.EA_LON))
-    return da.sel(lat=slice(0, 90))
+    return da.sel(lat=slice(0, 90))       # 2 m 기온도 북반구 전체 (예전에는 동아시아만 받았다)
+
+
+def _is_current(name: str, out) -> bool:
+    """이미 받은 파일이 지금 정의와 같은 영역인지. 예전에 동아시아만 받은 t2m 파일은 다시 받는다."""
+    if name != "t2m":
+        return True
+    from ..common import _NC_LOCK
+    with _NC_LOCK, xr.open_dataset(out) as ds:      # HDF5는 스레드에서 동시에 열면 죽는다
+        return float(ds.lat.min()) < 1.0
 
 
 def _field_year(ds: xr.Dataset, name: str, year: int) -> str:
     out = C.DATA / "wb2" / name / f"{year}.nc"
-    if out.exists():
+    if out.exists() and _is_current(name, out):
         return "skip"
     if name in C.PL_FIELDS:
         var, lev = C.PL_FIELDS[name]

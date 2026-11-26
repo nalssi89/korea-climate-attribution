@@ -18,7 +18,7 @@ import xarray as xr
 from .. import config as C
 from .. import kma_official as K
 from .. import narrative as N
-from ..common import anomaly, field_clim, get_logger, open_field
+from ..common import anomaly, ea_crop, field_clim, get_logger, open_field
 from ..periods import Period, same_dates_other_years, standing
 from .regression import FACTOR_LABEL
 
@@ -132,8 +132,8 @@ class Engine:
         # 동아시아 격자 편차 (기온, 강수)
         self.grid = {}
         for name in ("t2m", "tp"):
-            da = open_field(name).load()
-            an = anomaly(da, field_clim(name)).sel(time=self.idx)
+            da = ea_crop(open_field(name)).load()          # t2m은 북반구로 저장돼 있어 동아시아만 자른다
+            an = anomaly(da, ea_crop(field_clim(name))).sel(time=self.idx)
             self.grid[name] = (an.lat.values, an.lon.values, Windows(self.idx, an.values.reshape(len(self.idx), -1)))
 
     def design(self, ends: pd.DataFrame, n: int) -> np.ndarray:
