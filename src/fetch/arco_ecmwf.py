@@ -18,6 +18,7 @@ import xarray as xr
 from .. import config as C
 from ..common import atomic_to_netcdf, get_logger, has_key
 from . import arco_raw as A
+from . import cds_jobs
 
 log = get_logger("fetch.ecmwf")
 STORES = {
@@ -155,7 +156,8 @@ def _last_valid(da: xr.DataArray, back: int = 40) -> str:
 
 
 def _cds_item(it, date: dt.date) -> np.ndarray | None:
-    """CDS API로 한 항목(한 변수·한 층·그날 시각)을 받는다. 요청은 한 번에 한 건, 끝난 뒤 다음 건."""
+    """CDS API로 한 항목(한 변수·한 층·그날 시각)을 받는다. 요청은 한 번에 한 건, 끝난 뒤 다음 건.
+    같은 요청이 이미 대기열에 있거나 끝나 있으면 새로 넣지 않고 그 작업을 이어받는다."""
     import cdsapi
     kind, var, fname = it.path.split("/")
     out = C.DATA / "cds" / f"{date:%Y%m%d}_{var}_{fname}"
@@ -167,9 +169,14 @@ def _cds_item(it, date: dt.date) -> np.ndarray | None:
         if kind == "PL":
             req["pressure_level"] = [fname.split(".")[0]]
         name = "reanalysis-era5-pressure-levels" if kind == "PL" else "reanalysis-era5-single-levels"
-        cl = cdsapi.Client(url="https://cds.climate.copernicus.eu/api", key=os.environ["CDSAPI_KEY"], quiet=True, progress=False)
         tmp = out.with_suffix(".part")
-        cl.retrieve(name, req, str(tmp))
+        jid = cds_jobs.find(name, {k: v for k, v in req.items() if k != "download_format"})
+        if jid is not None:
+            log.info("%s %s: 이미 넣은 CDS 작업을 이어받는다 (새 요청을 넣지 않음)", date, it.key)
+            cds_jobs.wait(jid, tmp)
+        else:
+            cl = cdsapi.Client(url="https://cds.climate.copernicus.eu/api", key=os.environ["CDSAPI_KEY"], quiet=True, progress=False)
+            cl.retrieve(name, req, str(tmp))
         tmp.rename(out)
     ds = xr.open_dataset(out)
     da = ds[[v for v in ds.data_vars if ds[v].ndim >= 3][0]].squeeze(drop=True)
