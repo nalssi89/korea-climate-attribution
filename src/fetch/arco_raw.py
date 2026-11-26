@@ -143,11 +143,14 @@ def parse_cdf_header(b: bytes) -> dict:
         else:
             begin = u32()
         var[vn] = dict(dims=[dims[i] for i in dimids], atts=a, type=typ, begin=begin)
-    data = [v for v in var.values() if len(v["dims"]) == 3]
+    data = [v for v in var.values() if len(v["dims"]) >= 3]
     assert len(data) == 1 and numrecs == 0, "예상과 다른 파일 구조"
     v = data[0]
-    assert [n for _, n in v["dims"]] == [24, NLAT, NLON] and v["type"] == 3, "예상과 다른 차원/자료형"
-    return dict(begin=v["begin"], scale=v["atts"]["scale_factor"][0], offset=v["atts"]["add_offset"][0],
+    shape = [n for _, n in v["dims"]]
+    # ERA5와 ERA5T가 섞인 날은 (time, expver, lat, lon) 4차원이고, 값은 expver 둘 중 한쪽에만 있다
+    nexp = shape[1] if len(shape) == 4 and v["dims"][1][0] == "expver" else 1
+    assert shape in ([24, NLAT, NLON], [24, nexp, NLAT, NLON]) and v["type"] == 3, "예상과 다른 차원/자료형"
+    return dict(begin=v["begin"], nexp=nexp, scale=v["atts"]["scale_factor"][0], offset=v["atts"]["add_offset"][0],
                 fill=v["atts"].get("_FillValue", (None,))[0])
 
 
@@ -159,11 +162,12 @@ def _read_cdf(fs, paths: list[str], its: list[Item], heads: list[bytes]) -> list
     for i, (p, it, m) in enumerate(zip(paths, its, meta)):
         r0, r1 = it.rows
         for h in it.hours:
-            s = m["begin"] + (h * NLAT + r0) * NLON * 2
-            rp.append(p); rs.append(s); re_.append(s + (r1 - r0 + 1) * NLON * 2); owner.append(i)
+            for e in range(m["nexp"]):
+                s = m["begin"] + ((h * m["nexp"] + e) * NLAT + r0) * NLON * 2
+                rp.append(p); rs.append(s); re_.append(s + (r1 - r0 + 1) * NLON * 2); owner.append((i, e))
     blobs = fs.cat_ranges(rp, rs, re_)
     out = [[] for _ in its]
-    for i, blob in zip(owner, blobs):
+    for (i, e), blob in zip(owner, blobs):
         if isinstance(blob, Exception):
             raise blob
         it, m = its[i], meta[i]
@@ -171,7 +175,11 @@ def _read_cdf(fs, paths: list[str], its: list[Item], heads: list[bytes]) -> list
         a = raw.astype("float32") * np.float32(m["scale"]) + np.float32(m["offset"])
         if m["fill"] is not None:
             a[raw == m["fill"]] = np.nan
-        out[i].append(a[:, it.cols[0]:it.cols[1] + 1])
+        a = a[:, it.cols[0]:it.cols[1] + 1]
+        if e == 0:
+            out[i].append(a)
+        else:                       # 앞 expver에서 비어 있던 곳을 채운다
+            out[i][-1] = np.where(np.isnan(out[i][-1]), a, out[i][-1])
     return [np.stack(x) for x in out]
 
 

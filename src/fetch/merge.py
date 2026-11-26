@@ -42,7 +42,9 @@ def _wb2_strat(last_year: int) -> xr.Dataset:
     s = _wb2("strat", last_year)
     low = _wb2("pcap", last_year).pcap
     pcap = xr.concat([s.pcap, low], "level").sel(level=C.PCAP_LEVELS)
-    return xr.Dataset({"u1060": s.u1060, "pcap": pcap.transpose("time", "level"), "z10": s.z10})
+    # 512x256 격자는 극점이 없어 90°N 줄이 빈다. 극점 값은 88.5°N 동서평균으로 채운다.
+    z10 = s.z10.where(s.z10.lat < 90, s.z10.sel(lat=88.5).mean("lon"))
+    return xr.Dataset({"u1060": s.u1060, "pcap": pcap.transpose("time", "level"), "z10": z10})
 
 
 def build(end: dt.date) -> None:
@@ -61,7 +63,10 @@ def build(end: dt.date) -> None:
         a = arco[name].rename(dict(zip(DIMS.get(name, ("lat", "lon")), ("lat", "lon"))))
         a = _round(a).sel(lat=w.lat, lon=w.lon)
         da = xr.concat([w, a], "time").astype("float32").rename(name)
-        assert da.time.to_index().is_unique and len(da.time) == (end - dt.date(C.START_YEAR, 1, 1)).days + 1
+        assert da.time.to_index().is_unique and len(da.time) == (end - dt.date(C.START_YEAR, 1, 1)).days + 1, \
+            f"{name}: 날짜가 빠졌거나 겹친다"
+        if name not in ("sst", "ci"):
+            assert not bool(da.isnull().any()), f"{name}: 결측이 있다"
         atomic_to_netcdf(da.to_dataset(), out / f"{name}.nc")
         log.info("병합 %s %s", name, dict(da.sizes))
     st = xr.concat([strat_w[["u1060", "pcap"]], arco[["u1060", "pcap"]]], "time")
@@ -77,7 +82,7 @@ def validate(arco: xr.Dataset) -> pd.DataFrame:
     rows = []
     wst = xr.open_dataset(C.DATA / "wb2" / "strat" / f"{y}.nc")
     for name in C.ALL_FIELDS:
-        w = _round(wst.z10 if name == "z10" else xr.open_dataset(C.DATA / "wb2" / name / f"{y}.nc")[name]).sel(time=sl)
+        w = _round(wst.z10.where(wst.z10.lat < 90, wst.z10.sel(lat=88.5).mean("lon")) if name == "z10" else xr.open_dataset(C.DATA / "wb2" / name / f"{y}.nc")[name]).sel(time=sl)
         a = _round(a_all[name].rename(dict(zip(DIMS.get(name, ("lat", "lon")), ("lat", "lon"))))).sel(lat=w.lat, lon=w.lon).values
         d = a - w.values
         ok = np.isfinite(d)
