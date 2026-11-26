@@ -101,16 +101,25 @@ def run():
     u = idx["ural"]
     bul.append(f"우랄블로킹: 우랄 영역 Z500 편차 평균 {_s(u['mean'], 0, ' m')}(표준화 {u['z']:+.1f}σ), "
                f"30~90°E 블로킹일 {rec['blocked_days']}일.")
-    n_ssw_win = 0
+    n_ssw_win, ssw_note = 0, ""
     if len(ssw_all):
-        n_ssw_win = int(((pd.to_datetime(ssw_all.date) >= pd.Timestamp(start) - pd.Timedelta(days=60)) &
-                         (pd.to_datetime(ssw_all.date) <= pd.Timestamp(end))).sum())
+        sd = pd.to_datetime(ssw_all.date)
+        near = ssw_all[(sd >= pd.Timestamp(start) - pd.Timedelta(days=60)) & (sd <= pd.Timestamp(end))]
+        n_ssw_win = len(near)
+        if n_ssw_win:
+            ssw_note = " 중심일: " + ", ".join(
+                f"{r['date']}" + ("" if r["confirmed"] else "(서풍 10일 복귀를 아직 확인하지 못한 잠정 판정)")
+                for _, r in near.iterrows()) + ". 과거 합성도에서 SSW 뒤 0~60일의 반응은 대부분 분석 기간 뒤에 온다."
     bul.append(f"성층권: 10 hPa 60°N 동서풍 평균 {idx['u1060']['mean']:.1f} m/s (같은 날짜 평년 {rec['u1060_clim']:.1f} m/s, "
                f"편차 {_s(idx['pv']['mean'], 1, ' m/s')}, {idx['pv']['z']:+.1f}σ), 기간 최저 {rec['u1060_min']:.1f} m/s "
-               f"({rec['u1060_min_date']}). 분석 기간과 그 앞 60일 사이에 탐지된 SSW는 {n_ssw_win}건이다.")
+               f"({rec['u1060_min_date']}). 분석 기간과 그 앞 60일 사이에 탐지된 SSW는 {n_ssw_win}건이다.{ssw_note}")
     last_oni = oni["oni"].dropna()
     bul.append(f"엔소: Niño3.4 편차 30일 평균 {_s(idx['nino34']['mean'], 2, '°C')}, 가장 최근 3개월 평균(ONI 방식)은 "
                f"{last_oni.index[-1]:%Y-%m} 중심 {last_oni.iloc[-1]:+.2f}°C.")
+    far = [f for f in rt["factors"] if f["factor"] != "trend" and abs(f["z"]) >= 2.5]
+    if far:
+        bul.append("표본 범위 주의: " + ", ".join(f"{f['label']}({f['z']:+.1f}σ)" for f in far) +
+                   "의 이번 값은 과거 같은 계절 표본의 가장자리이거나 바깥이라, 선형 회귀를 그대로 늘려 쓴 기여도는 불확실성이 구간보다 클 수 있다.")
     H.append("<h2>1. 핵심 요약</h2><ul>" + "".join(f"<li>{b}</li>" for b in bul) + "</ul>")
     H.append('<div class="note">기여도는 과거 같은 계절의 통계 관계에 이번 기간의 지수값을 대입한 추정이다. '
              '인자끼리 얽혀 있어 인과를 깔끔하게 나누지 못하며, 구간과 범위를 함께 읽어야 한다 (7장 참고).</div>')

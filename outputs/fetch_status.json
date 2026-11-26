@@ -1,0 +1,12 @@
+{
+  "CDSAPI_KEY": "없음",
+  "KMA_API_KEY": "없음",
+  "storage.googleapis.com": "도달",
+  "arco.datastores.ecmwf.int": "차단",
+  "apihub.kma.go.kr": "차단",
+  "ECMWF ARCO": "쓰지 않음 (키 없음, 도메인 차단, 또는 보충할 날짜 없음)",
+  "KMA ASOS": "건너뜀: 환경변수 KMA_API_KEY 없음, apihub.kma.go.kr 차단",
+  "NOAA ONI": "건너뜀: cpc.ncep.noaa.gov에 닿지 않음 (ProxyError)",
+  "자료 끝 날짜": "2026-11-18",
+  "Google ARCO-ERA5 원시 자료 끝": "2026-11-18"
+}
