@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>동아시아 기후인자 대시보드</title>
+<meta name="description" content="ERA5와 기상청 ASOS로 본 북반구 기후인자(우랄블로킹, 성층권 돌연승온, 엔소 등)와 동아시아·한반도 기온·강수 편차의 기간별 객관 분석">
+<link rel="stylesheet" href="assets/style.css">
+<script>try{const t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <h1>북반구 기후인자와 동아시아 기온·강수 대시보드</h1>
+  <span class="meta" id="dataEnd">자료 불러오는 중…</span>
+  <a href="schematic/" id="schemLink"><button type="button">3D 모식도</button></a>
+  <button type="button" id="themeBtn" aria-label="테마 바꾸기">테마: 시스템</button>
+</div></header>
+<main class="wrap">
+  <div class="controls" role="group" aria-label="기간 선택">
+    <div class="tabs" id="kindTabs"></div>
+    <button type="button" id="prevBtn" aria-label="앞 기간">◀</button>
+    <span class="label" id="periodLabel">–</span>
+    <button type="button" id="nextBtn" aria-label="뒤 기간">▶</button>
+    <span class="pill" id="periodState"></span>
+  </div>
+
+  <section>
+    <h2>요약 <span class="small">(문장은 모두 수치에서 규칙으로 만든다)</span></h2>
+    <div class="tiles" id="tiles"></div>
+    <div class="card" style="margin-top:12px"><ul class="sent" id="sentences"></ul></div>
+  </section>
+
+  <section>
+    <h2>인자별 기여도</h2>
+    <div class="row">
+      <select id="regionSel" aria-label="영역"></select>
+      <div class="tabs" id="varTabs"><button type="button" data-v="t" class="on">기온</button><button type="button" data-v="p">강수</button></div>
+    </div>
+    <div class="grid2" style="margin-top:10px">
+      <div class="card"><div class="chart" id="barChart"></div><p class="small" id="barNote"></p></div>
+      <div class="card"><h3 style="margin-top:0">기간 단위별 설명력 (교차검증 R²)</h3><div class="tw" id="r2Table"></div>
+        <p class="small">단위마다 가장 최근 기간의 값. 같은 날짜·같은 길이 창으로 1979년 이후 해마다 학습하고, 해 단위로 빼서 예측한다. 기간이 짧을수록 내부 변동이 커서 설명력이 낮다.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>북반구 편차장</h2>
+    <div class="tabs" id="nhTabs"></div>
+    <div class="grid2" style="margin-top:10px">
+      <div class="card mapbox"><canvas id="nhMap" width="600" height="600" aria-label="북반구 극투영 편차 지도"></canvas><div class="tip" id="nhTip"></div>
+        <div class="legend" id="nhLegend"></div><p class="small" id="nhNote"></p></div>
+      <div class="card">
+        <h3 style="margin-top:0">지수 (기간 평균)</h3><div class="tw" id="idxTable"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>동아시아 기온·강수와 인자별 기여 지도</h2>
+    <div class="row">
+      <div class="tabs" id="eaVarTabs"><button type="button" data-v="t2m" class="on">기온</button><button type="button" data-v="tp">강수</button></div>
+      <select id="eaLayerSel" aria-label="지도 층"></select>
+    </div>
+    <div class="grid2" style="margin-top:10px">
+      <div class="card mapbox"><canvas id="eaMap" width="600" height="480" aria-label="동아시아 지도"></canvas><div class="tip" id="eaTip"></div>
+        <div class="legend" id="eaLegend"></div><p class="small" id="eaNote"></p></div>
+      <div class="card"><h3 style="margin-top:0">하위 영역</h3><div class="tw" id="regTable"></div>
+        <p class="small">ERA5 육지 비율 가중 평균. σ는 평년(1991~2020) 같은 날짜 창 기준, 백분위는 1979년 이후 같은 날짜 대비. 한반도 관측(ASOS)은 전국 평균 편차만 싣는다.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>일별 지수와 사건</h2>
+    <p class="small">회색 띠: 선택한 기간 · 주황 띠: 5일 이상 우랄블로킹 · 보라 띠·점선: 성층권 돌연승온</p>
+    <div class="grid2" id="tsGrid"></div>
+  </section>
+
+  <section id="sswSec">
+    <h2 id="sswTitle">성층권 돌연승온</h2>
+    <div class="card"><ul class="sent" id="sswSent"></ul></div>
+    <div class="grid2" style="margin-top:12px" id="sswCharts"></div>
+    <div class="card mapbox" style="margin-top:12px"><h3 style="margin-top:0">극관(65°N 이북) 고도 표준화 편차 · 연직-시간 단면</h3>
+      <canvas id="pchCanvas" aria-label="극관 고도 편차 단면"></canvas><div class="tip" id="pchTip"></div>
+      <div class="legend" id="pchLegend"></div><p class="small">양(+)은 극소용돌이가 약함(고도 높음). 성층권의 양의 편차가 아래로 내려오면 하향 전파.</p></div>
+    <div class="grid2" style="margin-top:12px" id="sswHist"></div>
+  </section>
+
+  <section>
+    <h2>방법과 한계</h2>
+    <div class="card small" id="methods"></div>
+  </section>
+</main>
+<footer><div class="wrap" id="footer"></div></footer>
+<script src="assets/viz.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
