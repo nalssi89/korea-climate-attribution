@@ -302,15 +302,15 @@ function drawStrat(dark, ink, warm, cool) {
     m.position.copy(xyz(vlat, vlon, R.strat)); groups.strat.add(m);
     label(pieces >= 2 ? "극소용돌이 (분리)" : "극소용돌이 중심", xyz(vlat, vlon, R.strat + 0.05), "strat", cool);
   }
-  const t10 = ser("t10_cap_anom");
-  if (Number.isFinite(t10) && t10 > 3) {
-    if (!has("t10_anom")) {
-      const glow = new THREE.Mesh(new THREE.CircleGeometry(0.18 + Math.min(t10, 40) / 80, 48),
-        new THREE.MeshBasicMaterial({ color: warm, transparent: true, opacity: Math.min(0.15 + t10 / 40, 0.7), side: THREE.DoubleSide, depthWrite: false }));
-      glow.rotation.x = -Math.PI / 2; glow.position.set(0, R.strat + 0.004, 0); groups.strat.add(glow);
-    }
-    label(`극관 승온 +${t10.toFixed(0)} K`, new THREE.Vector3(0, R.strat + 0.09, 0), "strat", warm);
+  // 승온은 그날 10 hPa 기온 편차장이 있는 곳에만 그린다. 극관 평균값으로 극 둘레에 원을 그리지 않는다(실제 분포가 아니므로).
+  if (has("t10_anom")) {
+    // 실제 승온·냉각 중심: 편차 ±8 K 이상인 국지 극값, 서로 35° 이상 떨어진 것 최대 3개
+    for (const p of extrema(V.slice(F.t10_anom, T), 8, 35, 3))
+      label(`${p.v > 0 ? "승온 +" : "냉각 −"}${Math.abs(p.v).toFixed(0)} K`, xyz(p.lat, p.lon, R.strat + 0.04), "strat", p.v > 0 ? warm : cool, "sm");
   }
+  const t10 = ser("t10_cap_anom");
+  if (Number.isFinite(t10) && Math.abs(t10) >= 3)
+    label(`극관(60~90°N) 평균 ${V.sgn(t10, 0, " K")}`, new THREE.Vector3(0, R.strat + 0.09, 0), "strat", t10 > 0 ? warm : cool, "sm");
   const u = ser("u1060"), ring = [];
   for (let lo = 0; lo <= 360; lo += 4) ring.push(xyz(60, lo, R.strat + 0.003));
   const ringCol = u >= 0 ? (dark ? 0x338ced : 0x257de0) : (dark ? 0xeb6263 : 0xc8393a);
@@ -343,14 +343,10 @@ function drawJet(dark, ink) {
   if (today.jet) label(`제트 최대 ${top.v.toFixed(0)} m/s`, xyz(top.lat + 4, top.lon, R.jet + 0.04), "jet", dark ? "#ffc46b" : "#a8235a");
 }
 
-// --- 500 hPa: 고도 편차(면 + 60 m 간격 등치선), 파동활동 플럭스(화살표), 블로킹
+// --- 500 hPa: 고도 편차(면), 파동활동 플럭스(화살표), 블로킹
 function drawMid(dark, ink, warm, cool) {
   const Z = fine("z500_anom");
-  groups.mid.add(shell(Z, R.mid, divFn(240, 0.75, 0.15)));
-  const pos = [], neg = [];
-  for (let L = 60; L <= 480; L += 60) { pos.push(...contour(Z, L)); neg.push(...contour(Z, -L)); }
-  groups.mid.add(thinLines(pos, R.mid + 0.001, dark ? 0xf6b7a8 : 0x8c1c1d, 0.85));
-  groups.mid.add(thinLines(neg, R.mid + 0.001, dark ? 0x9dc8f7 : 0x0e3d7e, 0.85));
+  groups.mid.add(shell(Z, R.mid, divFn(240, 0.8, 0.15)));
   // 편차 중심 표시 (±120 m 이상, 30° 이상 떨어진 것 최대 6개)
   const ex = extrema(Z, 120, 30, 6);
   for (const p of ex) label(`${p.v > 0 ? "+" : "−"}${Math.abs(p.v).toFixed(0)}`, xyz(p.lat, p.lon, R.mid + 0.02), "mid", p.v > 0 ? warm : cool, "sm");
@@ -369,10 +365,29 @@ function drawMid(dark, ink, warm, cool) {
   if (ser("blocked") >= 1) label(`우랄 블로킹 (Z500 ${V.sgn(ser("ural"), 0, " m")})`, xyz(66, 60, R.mid + 0.06), "mid", warm);
 }
 
-// --- 지상·해양: 육지 2 m 기온 편차, 해수면온도 편차, 해면기압 편차 등치선과 고·저기압 중심, 해빙 경계
+// --- 지상·해양: 면은 고른 변수의 편차, 선은 해면기압 편차 등치선과 고·저기압 중심, 해빙·눈덮임 경계
+// 해빙·눈덮임·토양수분은 '줄면 빨강(따뜻한 쪽), 늘면 파랑'이 되게 부호를 뒤집어 칠한다.
+const SFC_VARS = {
+  t: { name: "기온 (육지 2 m 기온 + 해수면온도)", need: ["t2m_anom", "sst_anom"], range: "육지 ±8 °C · 바다 ±2.5 °C" },
+  skt: { name: "지표기온 (skin temperature)", need: ["skt_anom"], range: "±8 °C", vmax: 8 },
+  ci: { name: "해빙 농도", need: ["ci", "ci_clim"], range: "±40 %p (줄면 빨강)", vmax: 0.4, flip: true },
+  snow: { name: "눈덮임 비율", need: ["snowc", "snowc_clim"], range: "±60 %p (줄면 빨강)", vmax: 0.6, flip: true },
+  swvl1: { name: "토양수분 (표층 0~7 cm)", need: ["swvl1_anom"], range: "±0.08 m³/m³ (마르면 빨강)", vmax: 0.08, flip: true },
+};
+let sfcVar = "t";
+const sfcOK = (k) => SFC_VARS[k].need.every(has);
+function sfcField(k) {
+  if (k === "ci" || k === "snow") { const a = k === "ci" ? "ci" : "snowc"; return map2(fine(a), fine(a + "_clim"), (x, c) => x - c); }
+  return fine(k + "_anom");
+}
 function drawSfc(dark, ink, warm, cool) {
-  if (has("sst_anom")) groups.sfc.add(shell(fine("sst_anom"), R.sfc + 0.001, divFn(2.5, 0.85, 0.12)));
-  if (has("t2m_anom")) groups.sfc.add(shell(fine("t2m_anom"), R.sfc + 0.002, divFn(8, 0.85, 0.1)));
+  if (sfcVar === "t") {
+    if (has("sst_anom")) groups.sfc.add(shell(fine("sst_anom"), R.sfc + 0.001, divFn(2.5, 0.85, 0.12)));
+    if (has("t2m_anom")) groups.sfc.add(shell(fine("t2m_anom"), R.sfc + 0.002, divFn(8, 0.85, 0.1)));
+  } else if (sfcOK(sfcVar)) {
+    const s = SFC_VARS[sfcVar], fn = divFn(s.vmax, 0.88, 0.1);
+    groups.sfc.add(shell(sfcField(sfcVar), R.sfc + 0.002, s.flip ? (v) => fn(-v) : fn));
+  }
   if (has("msl_anom")) {
     const M = fine("msl_anom"), hi = [], lo = [];
     for (let L = 4; L <= 32; L += 4) { hi.push(...contour(M, L)); lo.push(...contour(M, -L)); }
@@ -427,6 +442,22 @@ function hud() {
     `<b>지수</b> AO ${V.sgn(ser("ao"), 2)} · Niño3.4 ${V.sgn(ser("nino34"), 2, "°C")} · 한반도 기온 ${V.sgn(ser("korea_t"), 1, "°C")}` +
     (mk.length ? `<br><span class="ev">● ${mk.join(", ")}</span>` : "");
   $("slider").value = T;
+  const [lo, hi] = range, inR = T >= lo && T <= hi;
+  $("rangeInfo").textContent = `재생 구간 ${dateOf(lo)} ~ ${dateOf(hi)} (${hi - lo + 1}일) · 지금 ${d}` +
+    (inR ? ` (${T - lo + 1}일째)` : " (구간 밖: 재생하면 구간 첫날부터)");
+  playLabel();
+}
+
+// 재생: 구간 끝에 있거나 구간 밖이면 첫날부터, 아니면 지금 날짜부터 이어서
+function playLabel() {
+  const [lo, hi] = range;
+  $("playBtn").textContent = playing ? "❚❚ 정지" : T >= hi || T < lo ? "▶ 첫날부터 재생" : "▶ 이어서 재생";
+  $("playBtn").setAttribute("aria-pressed", playing);
+}
+function setPlay(on) {
+  const [lo, hi] = range;
+  if (on && (T >= hi || T < lo)) { T = lo; draw(); }
+  playing = on; lastTick = performance.now(); playLabel();
 }
 
 // ---------------------------------------------------------------- 범례
@@ -440,14 +471,15 @@ function keys() {
   const t10 = has("t10_anom");
   const rows = [
     ["성층권 10 hPa", divBar(), t10 ? "−20 ~ +20 K" : "−1500 ~ +1500 m",
-      (t10 ? "면: 기온 편차(빨강 = 승온). " : "면: 극소용돌이 가장자리보다 낮은 곳(파랑)·높은 곳(빨강). ") +
-      "가는 선: 고도 400 m 간격. <b>굵은 파란 선</b>: 극소용돌이 가장자리(그날 평년 60°N 평균 고도). 60°N 고리: 동서풍(빨강 = 동풍 역전)."],
+      (t10 ? "면: 기온 편차(빨강 = 승온, 파랑 = 냉각). 숫자: ±8 K 넘는 승온·냉각 중심. "
+        : "면: 극소용돌이 안쪽(가장자리보다 고도가 낮은 곳, 진할수록 깊음). 기온 편차 분포는 자료 준비 중이라 극관 평균값만 숫자로 보인다. ") +
+      "가는 선: 고도 600 m 간격. <b>굵은 파란 선</b>: 극소용돌이 가장자리(그날 평년 60°N 평균 고도). 60°N 고리: 동서풍(빨강 = 동풍 역전)."],
     ["제트 250 hPa", jetBar(), `${JET_MIN} ~ ${JET_TOP}+ m/s`,
       `면: 풍속 ${JET_MIN} m/s 이상. <b>굵은 주황 선</b>: ${JET_MIN} m/s 등풍속선, 가는 보라 선: 70 m/s. 화살표: 경도 10°마다 제트 축의 바람 방향.`],
     ["500 hPa", divBar(), "−240 ~ +240 m",
-      "면: 고도 편차(작은 편차는 투명). 선: 60 m 간격(빨강 +, 파랑 −). 숫자: 편차 중심. 검은 화살표: 7일 평균 파동활동 플럭스(Takaya-Nakamura, 상위 35%)."],
-    ["지상·해양", divBar(), "육지 ±8 °C · 바다 ±2.5 °C",
-      "면: 육지 2 m 기온 편차와 해수면온도 편차. 선: 해면기압 편차 4 hPa 간격, H/L: 편차 중심(hPa). " +
+      "면: 고도 편차(작은 편차는 투명, 빨강 + 파랑 −). 숫자: ±120 m 넘는 편차 중심(m). 검은 화살표: 7일 평균 파동활동 플럭스(Takaya-Nakamura, 상위 35%)."],
+    ["지상·해양", divBar(), SFC_VARS[sfcVar].range,
+      `면: ${SFC_VARS[sfcVar].name} 편차(1991~2020 평년 대비). 선: 해면기압 편차 4 hPa 간격(빨강 +, 파랑 −), H/L: 해면기압 편차 중심(hPa). ` +
       (has("ci") ? "<b>청록 굵은 선</b>: 해빙 경계(농도 15%), 가는 선: 평년 경계. " : "") +
       (has("snowc") ? "<b>보라 굵은 선</b>: 눈덮임 경계(50%), 가는 선: 평년. " : "")],
     ["극관 기둥", divBar(), "−3 ~ +3 σ", "층별(1000~10 hPa) 극관 고도 표준화 편차. 위에서 아래로 번지면 하향 전파."],
@@ -479,19 +511,33 @@ renderer.domElement.addEventListener("pointermove", (e) => {
 renderer.domElement.addEventListener("wheel", (e) => { e.preventDefault(); cam.dist = Math.max(1.8, Math.min(9, cam.dist * (1 + Math.sign(e.deltaY) * 0.08))); }, { passive: false });
 $("resetBtn").onclick = () => Object.assign(cam, CAM0);
 
-// 한 층만 보기
-function focus(f) {
-  for (const cb of document.querySelectorAll("[data-l]")) { cb.checked = f === "all" || cb.dataset.l === f; groups[cb.dataset.l].visible = cb.checked; }
-  for (const b of document.querySelectorAll("[data-f]")) b.setAttribute("aria-pressed", b.dataset.f === f);
-  if (f === "strat") Object.assign(cam, { el: 70 * D2R }); else if (f !== "all") Object.assign(cam, { el: 55 * D2R });
+// 보일 층 고르기: 전체가 켜진 상태에서 층을 누르면 그 층만 남기고, 그 뒤로는 누를 때마다 더하거나 뺀다(여러 개 가능).
+// '전체'는 모두 켠다.
+const layerBtns = () => [...document.querySelectorAll("[data-l]")];
+function showLayers() {
+  let all = true;
+  for (const b of layerBtns()) { const on = b.getAttribute("aria-pressed") === "true"; groups[b.dataset.l].visible = on; all &&= on; }
+  $("allBtn").setAttribute("aria-pressed", all);
 }
+function toggleLayer(b) {
+  if ($("allBtn").getAttribute("aria-pressed") === "true") {
+    for (const x of layerBtns()) x.setAttribute("aria-pressed", x === b);
+    return showLayers();
+  }
+  const on = b.getAttribute("aria-pressed") !== "true";
+  if (!on && layerBtns().filter((x) => x.getAttribute("aria-pressed") === "true").length === 1) return;   // 하나는 남긴다
+  b.setAttribute("aria-pressed", on); showLayers();
+}
+function showAll() { for (const b of layerBtns()) b.setAttribute("aria-pressed", true); showLayers(); }
 
 const proj = new THREE.Vector3();
 function loop(ts) {
   requestAnimationFrame(loop);
   if (playing && ts - lastTick > 1000 / +$("speedSel").value) {
-    lastTick = ts; const lo = range ? range[0] : 0, hi = range ? range[1] : D.n - 1;
-    T = T >= hi || T < lo ? lo : T + 1; draw();
+    lastTick = ts; const [lo, hi] = range;
+    if (T >= hi) { if ($("loopChk").checked) T = lo; else setPlay(false); }   // 끝나면 멈춘다(반복을 켜면 첫날로)
+    else T = T < lo ? lo : T + 1;
+    draw();
   }
   place(); renderer.render(scene, camera);
   const w = stage.clientWidth, h = stage.clientHeight, camDir = camera.position.clone().normalize();
@@ -513,22 +559,32 @@ function loop(ts) {
   baseLayer();
   $("slider").max = D.n - 1;
   const q = new URLSearchParams(location.search), idx = (d) => Math.round((Date.parse(d + "T00:00:00Z") - Date.parse(D.start + "T00:00:00Z")) / 864e5);
+  // 재생 구간 목록: (대시보드에서 넘어온 기간) · 전체 자료 · 최근 30일 · 최근 7일
+  const ranges = [];
   if (q.get("start") && q.get("end")) {
     const a = Math.max(0, idx(q.get("start"))), b = Math.min(D.n - 1, idx(q.get("end")));
-    if (b >= a && b >= 0) { range = [a, b]; T = b; $("rangeInfo").textContent = `대시보드 기간 ${q.get("start")} ~ ${q.get("end")} (재생은 이 구간 반복)`; }
+    if (b >= a && b >= 0) ranges.push({ t: `대시보드 기간 ${dateOf(a)} ~ ${dateOf(b)}`, r: [a, b] });
   }
-  if (!range) { T = D.n - 1; $("rangeInfo").textContent = `${D.start} ~ ${D.end} (${D.n}일)`; }
+  ranges.push({ t: `전체 자료 ${D.start} ~ ${D.end} (${D.n}일)`, r: [0, D.n - 1] });
+  for (const n of [30, 7]) if (D.n > n) ranges.push({ t: `최근 ${n}일 ${dateOf(D.n - n)} ~ ${D.end}`, r: [D.n - n, D.n - 1] });
+  range = ranges[0].r; T = range[1];   // 처음 화면은 구간 마지막 날, 재생은 구간 첫날부터
+  $("rangeSel").innerHTML = ranges.map((o, i) => `<option value="${i}">재생 구간: ${o.t}</option>`).join("");
+  $("rangeSel").onchange = (e) => { range = ranges[+e.target.value].r; playing = false; T = range[0]; draw(); };
   const tk = $("ticks"), pct = (i) => (i / (D.n - 1)) * 100 + "%";
   for (const m of D.marks) { const i = idx(m.date); if (i < 0 || i >= D.n) continue; const s = document.createElement("span"); s.className = m.kind; s.style.left = pct(i); s.textContent = m.kind === "ssw" ? "SSW" : "블로킹"; s.title = `${m.date} ${m.label}`; tk.appendChild(s); }
-  if (range) for (const i of range) { const s = document.createElement("span"); s.className = "sel"; s.style.left = pct(i); s.textContent = i === range[0] ? "시작" : "끝"; tk.appendChild(s); }
   $("slider").oninput = (e) => { T = +e.target.value; draw(); };
-  $("playBtn").onclick = () => { playing = !playing; $("playBtn").textContent = playing ? "❚❚ 정지" : "▶ 재생"; $("playBtn").setAttribute("aria-pressed", playing); };
+  $("playBtn").onclick = () => setPlay(!playing);
+  $("firstBtn").onclick = () => { setPlay(false); T = range[0]; draw(); };
+  $("lastBtn").onclick = () => { setPlay(false); T = range[1]; draw(); };
   const jump = (s) => { T = Math.max(0, Math.min(D.n - 1, T + s * +$("jumpSel").value)); draw(); };
   $("backBtn").onclick = () => jump(-1); $("fwdBtn").onclick = () => jump(1);
-  for (const cb of document.querySelectorAll("[data-l]")) cb.onchange = () => { groups[cb.dataset.l].visible = cb.checked; };
-  for (const b of document.querySelectorAll("[data-f]")) b.onclick = () => focus(b.dataset.f);
+  for (const b of layerBtns()) b.onclick = () => toggleLayer(b);
+  $("allBtn").onclick = showAll;
   $("gapSel").onchange = (e) => { gap = +e.target.value; setR(); draw(); };
-  const missing = ["t10_anom", "v250", "ci", "snowc"].filter((k) => !has(k));
+  const sel = $("sfcSel");
+  sel.innerHTML = Object.entries(SFC_VARS).map(([k, s]) => `<option value="${k}"${sfcOK(k) || k === "t" ? "" : " disabled"}>지상: ${s.name.split(" (")[0]}${sfcOK(k) || k === "t" ? "" : " (자료 준비 중)"}</option>`).join("");
+  sel.onchange = (e) => { sfcVar = e.target.value; draw(); keys(); };
+  const missing = ["t10_anom", "v250", "t2m(북반구)", "ci", "snowc", "swvl1_anom", "skt_anom"].filter((k) => k === "t2m(북반구)" ? !(has("t2m_anom") && F.t2m_anom.lat0 < 10) : !has(k));
   $("notes").textContent = `자료 ${D.start} ~ ${D.end}. 높이는 과장했다(10 hPa 약 31 km를 지구 반지름의 0.32배로). 격자는 3차 보간으로 부드럽게 그렸다.` +
     (missing.length ? ` 이번 자료에 없는 항목: ${missing.join(", ")} (다음 갱신에 추가).` : "");
   setTheme(document.documentElement.dataset.theme || "");
