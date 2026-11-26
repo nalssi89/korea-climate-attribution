@@ -205,7 +205,7 @@ function draw() {
     const v = P.v[T * nl + l]; if (v === null) continue;
     const s = v * 0.1, p = P.levels[l];
     const h = R.sfc + (Math.log(1000) - Math.log(p)) / (Math.log(1000) - Math.log(10)) * (R.strat - R.sfc);
-    const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.018, 24), new THREE.MeshBasicMaterial({ color: col(Math.max(-1, Math.min(1, s / 3))), transparent: true, opacity: 0.95 }));
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.016, 24), new THREE.MeshBasicMaterial({ color: col(Math.max(-1, Math.min(1, s / 3))), transparent: true, opacity: 0.95 }));
     disc.position.set(0, h, 0); groups.col.add(disc);
   }
   hud();

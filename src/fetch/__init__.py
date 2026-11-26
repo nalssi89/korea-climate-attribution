@@ -17,12 +17,15 @@ for noisy in ("gcsfs", "fsspec", "fsspec.caching"):
     logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-def _reachable(url: str) -> bool:
-    try:
-        requests.get(url, timeout=15)
-        return True
-    except requests.RequestException:
-        return False
+def _reachable(url: str, tries: int = 3) -> bool:
+    """도메인 도달 여부. 응답이 느린 서버(KMA 허브)가 있어 시간을 넉넉히 주고 몇 번 다시 본다."""
+    for _ in range(tries):
+        try:
+            requests.get(url, timeout=40)
+            return True
+        except requests.RequestException:
+            continue
+    return False
 
 
 def land_fraction() -> None:
@@ -66,18 +69,29 @@ def run(end: dt.date | None = None) -> dt.date:
             cov = arco_ecmwf.coverage()
             status["ECMWF ARCO 범위"] = cov
             if end is None or end > google_end:
+                # Google에 일부만 올라온 최근 날짜: 빠진 항목을 ECMWF ARCO, 그래도 없으면 CDS API(한 건씩)로 채운다
+                filled = []
+                d = google_end + dt.timedelta(days=1)
+                while (end is None or d <= end) and d < dt.datetime.now(dt.timezone.utc).date():
+                    r = arco_ecmwf.fill_partial(d)
+                    if r is None:
+                        break
+                    filled.append(r)
+                    final = d
+                    d += dt.timedelta(days=1)
+                if filled:
+                    status["최근 날짜 혼합 채움"] = filled
                 want = end or dt.date.fromisoformat(cov["pl_end"][:10])
-                final = arco_ecmwf.extend(google_end, want)
-            chk = arco_ecmwf.cross_check(min(final, dt.date.fromisoformat(cov["pl_end"][:10])) - dt.timedelta(days=1))
+                final = arco_ecmwf.extend(final, want)
+            chk = arco_ecmwf.cross_check(google_end)      # Google 자료만으로 만든 마지막 날로 비교한다
             status["ECMWF ARCO 교차 검증"] = chk
-            status["ECMWF ARCO"] = (f"보충 {google_end} → {final}" if final > google_end else
-                                    f"보충 없음: 기압면 {cov['pl_end']}까지, 층 {cov['levels'][-1]}~{cov['levels'][0]} hPa "
-                                    "(10·30 hPa 없음). Google 원시 자료가 더 최근이다. 겹치는 날로 교차 검증만 함")
+            status["ECMWF ARCO"] = (f"기압면 {cov['pl_end']}까지, 층 {cov['levels'][-1]}~{cov['levels'][0]} hPa(10·30 hPa 없음), "
+                                    f"해빙 없음. Google 완결 자료({google_end}) 뒤 {final}까지 빠진 항목 보충, 겹치는 날 교차 검증")
         except Exception as e:      # 키가 틀렸거나 저장소 구조가 바뀐 경우. 예외 문자열에 키는 들어가지 않는다
             status["ECMWF ARCO"] = f"실패: {type(e).__name__}"
     land_fraction()
-    status["KMA ASOS"] = kma.run(final) if status["apihub.kma.go.kr"] == "도달" \
-        else "건너뜀: apihub.kma.go.kr 차단"
+    # 도달 점검이 실패해도 키가 있으면 시도한다 (점검 요청만 끊기는 경우가 있다)
+    status["KMA ASOS"] = kma.run(final)
     status["NOAA ONI"] = noaa.run()
     merge.build(final)
     status["자료 끝 날짜"] = str(final)

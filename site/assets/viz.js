@@ -248,8 +248,8 @@ V.lineChart = (box, o) => {
   if (o.xticks) for (const d of o.xticks) { const i = di(d); if (i >= 0) V.el("text", { x: X(i), y: H - 6, "text-anchor": "middle" }, svg).textContent = d; }
   else for (let i = 0; i < n; i++) {
     const d = o.dates[i];
-    if (d.endsWith("-01") || i === 0) {
-      V.el("text", { x: X(i), y: H - 6, "text-anchor": i === 0 ? "start" : "middle" }, svg).textContent = `${+d.slice(5, 7)}월${d.endsWith("-01") ? "" : " " + (+d.slice(8)) + "일"}`;
+    if (d.endsWith("-01")) {
+      V.el("text", { x: X(i), y: H - 6, "text-anchor": "middle" }, svg).textContent = `${+d.slice(5, 7)}월`;
     }
   }
   for (const mk of o.marks || []) {

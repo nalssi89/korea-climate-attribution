@@ -264,12 +264,9 @@ def _fs():
     return _FS
 
 
-def fetch_day(date: dt.date) -> str:
-    out = day_path(date)
-    if out.exists():
-        return "skip"
+def read_items(date: dt.date, its: list[Item]) -> dict[str, np.ndarray]:
+    """항목별 (시각, 줄, 칸) 원자료 배열을 Google 원시 파일에서 읽는다."""
     fs = _fs()
-    its = items()
     paths = [_path(date, it) for it in its]
     heads = fs.cat_ranges(paths, 0, HEAD)
     for p, h in zip(paths, heads):
@@ -289,7 +286,23 @@ def fetch_day(date: dt.date) -> str:
             if isinstance(blob, Exception):
                 raise RuntimeError(f"{paths[i]}: {blob!r}")
             arrs[its[i].key] = _read_hdf(blob, its[i])
-    ds = reduce_day(arrs, its).expand_dims(time=[np.datetime64(date, "ns")])
+    return arrs
+
+
+def available_items(date: dt.date) -> tuple[list[Item], list[Item]]:
+    """그날 Google 원시 저장소에 올라온 항목과 아직 없는 항목."""
+    its = items()
+    hs = _fs().cat_ranges([_path(date, it) for it in its], 0, 8)
+    ok = [not isinstance(h, Exception) and len(h) > 0 for h in hs]
+    return [it for it, o in zip(its, ok) if o], [it for it, o in zip(its, ok) if not o]
+
+
+def fetch_day(date: dt.date) -> str:
+    out = day_path(date)
+    if out.exists():
+        return "skip"
+    its = items()
+    ds = reduce_day(read_items(date, its), its).expand_dims(time=[np.datetime64(date, "ns")])
     atomic_to_netcdf(ds, out)
     return "ok"
 

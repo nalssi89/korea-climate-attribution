@@ -102,12 +102,13 @@ def precursors(df: pd.DataFrame, d0: pd.Timestamp, ub: pd.DataFrame) -> dict:
 
 
 def downward(pch: xr.DataArray, d0: pd.Timestamp, end: pd.Timestamp, thr: float = 1.0) -> list[dict]:
-    """층별로 발생 −10일 이후 5일 평균 극관 고도 편차가 처음 +thr σ 이상이 된 날."""
+    """층별로 발생 −30일 이후 5일 평균 극관 고도 편차가 처음 +thr σ 이상이 된 날 (그 전날은 thr 미만)."""
     rows = []
     sm = pch.rolling(time=5, center=True, min_periods=3).mean()
     for lev in C.PCAP_LEVELS:
-        s = sm.sel(level=lev).to_series()[d0 - pd.Timedelta(days=10):end]
-        first = _first(s >= thr)
+        s = sm.sel(level=lev).to_series()[d0 - pd.Timedelta(days=30):end]
+        up = (s >= thr) & (s.shift(1) < thr)
+        first = _first(up)
         rows.append(dict(level=int(lev), first=str(first.date()) if first is not None else None,
                          lag=int((first - d0).days) if first is not None else None, max=float(s.max()),
                          max_date=str(s.idxmax().date())))
