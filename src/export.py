@@ -125,7 +125,11 @@ def schematic_file(df: pd.DataFrame, end: pd.Timestamp, case: dict, days: int = 
     t0 = end - pd.Timedelta(days=days - 1)
     times = pd.date_range(t0, end)
     sl = dict(lat=slice(18, 90))
+    s3 = dict(lat=slice(None, None, 2), lon=slice(None, None, 2))    # 1.5° → 3°
+    s45 = dict(lat=slice(None, None, 3), lon=slice(None, None, 3))   # 1.5° → 4.5°
     out = dict(start=str(t0.date()), end=str(end.date()), n=len(times), fields={})
+    # 모든 장은 북반구(또는 전지구) 격자 그대로 싣는다. 동아시아만 따로 자르지 않는다.
+    # 화면에서 3차 보간으로 1.5° 간격까지 부드럽게 다시 그린다.
 
     def daily(name, anom=True):
         da = open_field(name).sel(time=slice(t0, end)).load()
@@ -133,27 +137,40 @@ def schematic_file(df: pd.DataFrame, end: pd.Timestamp, case: dict, days: int = 
             da = anomaly(da, field_clim(name))
         return da
 
-    z10 = daily("z10", anom=False).sel(**sl).isel(lat=slice(None, None, 3), lon=slice(None, None, 3))
+    def put(key, da, unit, sc, offset=0.0):
+        out["fields"][key] = dict(unit=unit, **grid(da.values, da.lat, da.lon, sc, offset))
+
+    # 10 hPa: 고도(극소용돌이 모양)와 기온 편차(승온)
+    put("z10", daily("z10", anom=False).sel(**sl).isel(**s45), "m", 10.0, 30000.0)
     # 극소용돌이 가장자리: 그날의 평년 60°N 동서평균 10 hPa 고도 (indices.strat.vortex_geometry와 같은 정의)
     edge = series_clim(open_field("z10").sel(lat=60.0).mean("lon").to_series())[t0:end]
-    out["fields"]["z10"] = dict(unit="m", **grid(z10.values, z10.lat, z10.lon, 10.0, 30000.0))
     out["z10_edge"] = edge.round(0).tolist()
-    for name, sc in (("z500", 5.0), ("msl", 0.5)):
-        da = daily(name).sel(**sl).isel(lat=slice(None, None, 3), lon=slice(None, None, 3))
-        out["fields"][f"{name}_anom"] = dict(unit="m" if name == "z500" else "hPa", **grid(da.values, da.lat, da.lon, sc))
-    u = daily("u250", anom=False).sel(**sl).isel(lat=slice(None, None, 3), lon=slice(None, None, 3))
-    out["fields"]["u250"] = dict(unit="m/s", **grid(u.values, u.lat, u.lon, 1.0))
-    t2 = daily("t2m").isel(lat=slice(None, None, 2), lon=slice(None, None, 2))
-    out["fields"]["t2m_anom"] = dict(unit="°C", **grid(t2.values, t2.lat, t2.lon, 0.5))
-    sst = open_field("sst").sel(time=slice(t0, end)).load()
-    sst = anomaly(sst, field_clim("sst")).sel(lat=slice(-15, 15), lon=slice(120, 285))
-    sst = sst.isel(lat=slice(None, None, 3), lon=slice(None, None, 3))
-    out["fields"]["sst_anom"] = dict(unit="°C", **grid(sst.values, sst.lat, sst.lon, 0.1))
-    # 파동활동 플럭스: 날마다 앞뒤 3일(7일) 평균 편차로 계산
+    put("t10_anom", daily("t10").sel(**sl).isel(**s45), "K", 0.2)
+    # 250 hPa 바람(풍속 등치선용), 500 hPa 고도 편차: 3°
+    put("u250", daily("u250", anom=False).sel(**sl).isel(**s3), "m/s", 0.5)
+    put("v250", daily("v250", anom=False).sel(**sl).isel(**s3), "m/s", 0.5)
+    put("z500_anom", daily("z500").sel(**sl).isel(**s3), "m", 2.0)
+    # 지상: 해면기압 편차, 해수면온도 편차, 해빙, 육지 2 m 기온 편차
+    put("msl_anom", daily("msl").sel(lat=slice(0, 90)).isel(**s45), "hPa", 0.2)
+    sst = daily("sst")
+    put("sst_anom", sst.sel(lat=slice(-30, 90)).isel(**s45), "°C", 0.1)
+    ci = daily("ci", anom=False)
+    ci_clim = ci - daily("ci")
+    put("ci", ci.sel(lat=slice(39, 90)).isel(**s3), "비율", 0.01)
+    put("ci_clim", ci_clim.sel(lat=slice(39, 90)).isel(**s3), "비율", 0.01)
+    t2 = daily("t2m")
+    if float(t2.lat.min()) < 10:       # 북반구 전체로 받은 경우: 바다(해빙 없는 곳)는 해수면온도로 보이므로 육지만 싣는다
+        sea = sst.notnull().reindex(lat=t2.lat, lon=t2.lon, method="nearest") & \
+            (ci.reindex(lat=t2.lat, lon=t2.lon, method="nearest").fillna(0) < 0.15)
+        t2 = t2.where(~sea)
+    else:
+        log.warning("t2m이 동아시아 영역만 있어 모식도 지상 기온도 그 영역만 그린다 (fetch에서 북반구로 받아야 함)")
+    put("t2m_anom", t2.sel(lat=slice(0, 90)).isel(**s3), "°C", 0.2)
+    # 파동활동 플럭스: 날마다 앞뒤 3일(7일) 평균 편차로 계산, 6° 간격
     fx, fy = [], []
     for t in times:
         a, b = t - pd.Timedelta(days=3), min(t + pd.Timedelta(days=3), end)
-        w = dynamics.tn_flux(a.date(), b.date()).sel(lat=slice(27, 81)).isel(lat=slice(None, None, 6), lon=slice(None, None, 6))
+        w = dynamics.tn_flux(a.date(), b.date()).sel(lat=slice(24, 84)).isel(lat=slice(None, None, 4), lon=slice(None, None, 4))
         fx.append(w.fx.values)
         fy.append(w.fy.values)
     out["fields"]["waf_fx"] = dict(unit="m²/s²", **grid(np.stack(fx), w.lat, w.lon, 0.5))

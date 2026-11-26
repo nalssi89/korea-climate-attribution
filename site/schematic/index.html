@@ -22,9 +22,16 @@
   .ticks span { position: absolute; top: 0; transform: translateX(-50%); font-size: 10px; color: var(--ink-2); white-space: nowrap; }
   .ticks span::before { content: ""; display: block; width: 2px; height: 6px; margin: 0 auto 1px; background: currentColor; }
   .ticks span.ssw { color: var(--s4); } .ticks span.ural { color: var(--s2); } .ticks span.sel { color: var(--ink); }
+  .lbl.sm { font-size: 11px; font-weight: 600; }
+  .lbl.tag { font-size: 11.5px; font-weight: 700; color: var(--ink-2); background: color-mix(in srgb, var(--surface) 80%, transparent);
+    border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; transform: translate(calc(-100% - 14px), -50%); }
   .layers label { margin-right: 10px; font-size: .88rem; white-space: nowrap; }
-  .keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 6px 14px; font-size: .84rem; }
-  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+  .seg { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 18px; font-size: .86rem; }
+  .krow .kh { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 3px; }
+  .cbar { display: inline-block; width: 110px; height: 10px; border-radius: 3px; border: 1px solid var(--line); }
+  .guide { font-size: .88rem; line-height: 1.6; margin: 0; padding-left: 1.3em; }
 </style>
 </head>
 <body>
@@ -43,6 +50,18 @@
   </div>
   <input type="range" id="slider" min="0" max="0" value="0" aria-label="날짜" style="width:100%">
   <div class="ticks" id="ticks"></div>
+  <div class="bar" role="group" aria-label="한 층만 보기">
+    <span class="small">한 층만 보기</span>
+    <span class="seg">
+      <button type="button" data-f="all" aria-pressed="true">전체</button>
+      <button type="button" data-f="strat" aria-pressed="false">성층권</button>
+      <button type="button" data-f="jet" aria-pressed="false">제트</button>
+      <button type="button" data-f="mid" aria-pressed="false">500 hPa</button>
+      <button type="button" data-f="sfc" aria-pressed="false">지상·해양</button>
+    </span>
+    <select id="gapSel" aria-label="층 간격"><option value="1" selected>층 간격 보통</option><option value="1.8">층 간격 넓게</option></select>
+    <button type="button" id="resetBtn">시점 초기화</button>
+  </div>
   <div id="stage"><div class="hud" id="hud">자료 불러오는 중…</div></div>
   <div class="bar layers" role="group" aria-label="층 켜기·끄기">
     <label><input type="checkbox" data-l="strat" checked> 성층권 10 hPa</label>
@@ -50,9 +69,18 @@
     <label><input type="checkbox" data-l="mid" checked> 500 hPa 편차·플럭스</label>
     <label><input type="checkbox" data-l="sfc" checked> 지상·해양</label>
     <label><input type="checkbox" data-l="col" checked> 극관 기둥</label>
-    <button type="button" id="resetBtn">시점 초기화</button>
   </div>
   <div class="card keys" id="keys"></div>
+  <div class="card" style="margin-top:12px">
+    <b>읽는 순서</b>
+    <ol class="guide">
+      <li><b>성층권</b>: 굵은 파란 선(극소용돌이 가장자리)이 극에서 밀려나거나 둘로 갈라지고, 극 쪽 면이 빨개지면 돌연승온이다.</li>
+      <li><b>제트</b>: 색칠된 띠가 풍속 50 m/s 이상인 곳이다. 띠가 남북으로 크게 굽이칠수록 파동이 강하다.</li>
+      <li><b>500 hPa</b>: 빨간 덩어리(+)는 기압능·블로킹, 파란 덩어리(−)는 기압골이다. 검은 화살표는 파동 에너지가 퍼져 가는 방향이다.</li>
+      <li><b>지상·해양</b>: 육지 기온과 해수면온도 편차, 해면기압 H/L 중심, 해빙 경계를 함께 본다.</li>
+      <li><b>극관 기둥</b>: 위층의 색이 며칠에 걸쳐 아래층으로 내려오면 성층권 영향이 지상까지 내려온 것이다.</li>
+    </ol>
+  </div>
   <p class="small" id="notes"></p>
 </main>
 <footer><div class="wrap">자료: ERA5(ECMWF/Copernicus, 최근 약 3개월은 잠정 ERA5T) · 해안선 Natural Earth · three.js r128(cdnjs). 높이와 화살표 길이는 보기 쉽게 과장했다. 모양은 그날 자료에서 계산한 값이며 손으로 그린 가정이 아니다.</div></footer>
