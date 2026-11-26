@@ -29,16 +29,23 @@ def _reachable(url: str, tries: int = 3) -> bool:
 
 
 def land_fraction() -> None:
-    """한반도 평균에 쓸 육지 비율(동아시아 1.5° 격자). ARCO-ERA5의 육지-바다 마스크를 상자 평균한다."""
-    out = C.DATA / "static" / "landfrac_ea.nc"
-    if out.exists():
-        return
+    """육지 비율(1.5° 격자). ARCO-ERA5의 육지-바다 마스크를 상자 평균한다.
+
+    landfrac_ea.nc: 동아시아 영역(한반도·하위 영역 평균용), landfrac_nh.nc: 북반구(강제인자 육지 지수, 모식도 육지 기온용).
+    """
     from . import arco_raw as A
+    outs = {"ea": (C.DATA / "static" / "landfrac_ea.nc", A.EA_LAT_T, A.EA_LON_T),
+            "nh": (C.DATA / "static" / "landfrac_nh.nc", C.LAT_NH, C.LON)}
+    if all(p.exists() for p, _, _ in outs.values()):
+        return
     g = xr.open_zarr(C.GARCO_ZARR, storage_options=dict(token="anon"), chunks=None)   # 반드시 chunks=None
     lsm = g["land_sea_mask"].sel(time="2020-01-01T00").load().values
-    lf = box_regrid(lsm, box_weights_lat(A.LAT_SRC, A.EA_LAT_T), box_weights_lon(A.LON_SRC, A.EA_LON_T))
-    da = xr.DataArray(lf, coords=dict(lat=A.EA_LAT_T, lon=A.EA_LON_T), dims=("lat", "lon"), name="landfrac")
-    atomic_to_netcdf(da.to_dataset(), out)
+    for out, lat, lon in outs.values():
+        if out.exists():
+            continue
+        lf = box_regrid(lsm, box_weights_lat(A.LAT_SRC, lat), box_weights_lon(A.LON_SRC, lon))
+        da = xr.DataArray(lf, coords=dict(lat=lat, lon=lon), dims=("lat", "lon"), name="landfrac")
+        atomic_to_netcdf(da.to_dataset(), out)
 
 
 def run(end: dt.date | None = None) -> dt.date:
@@ -54,6 +61,9 @@ def run(end: dt.date | None = None) -> dt.date:
     }
     log.info("사전 점검: %s", status)
     wb2.run()
+    from . import cds_monthly
+    status["CDS 월평균 지면온도"] = cds_monthly.run(wait=False)   # CDS 요청 1건. 끝난 뒤에 다음 CDS 요청(최근 날짜 보충)을 넣는다
+    cds_free = not cds_monthly.busy()                              # 아직 대기열에 있으면 이번 실행에서는 CDS를 더 쓰지 않는다
     latest = arco_raw.latest_complete_date()
     if end is None or end > latest:
         if end is not None:
@@ -73,7 +83,7 @@ def run(end: dt.date | None = None) -> dt.date:
                 filled = []
                 d = google_end + dt.timedelta(days=1)
                 while (end is None or d <= end) and d < dt.datetime.now(dt.timezone.utc).date():
-                    r = arco_ecmwf.fill_partial(d)
+                    r = arco_ecmwf.fill_partial(d, use_cds=cds_free)
                     if r is None:
                         break
                     filled.append(r)

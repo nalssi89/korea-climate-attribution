@@ -36,11 +36,33 @@ def _q(a: np.ndarray, scale: float, offset: float = 0.0) -> list:
     return [None if not np.isfinite(x) else int(x) for x in v.ravel()]
 
 
-def grid(da, lat, lon, scale: float, offset: float = 0.0) -> dict:
+def _pack(a: np.ndarray, scale: float, offset: float, int8: bool = False) -> dict:
+    """양자화한 정수를 int8(범위가 되면) 또는 int16 리틀엔디언으로 묶어 base64로 싣는다. 결측은 가장 작은 정수.
+
+    JSON의 정수 목록보다 4~6배 작다 (모식도 자료를 5 MB 안쪽으로 유지하려고 쓴다). 해독은 site/assets/viz.js의 V.decode.
+    """
+    import base64
+    v = np.round((np.asarray(a, dtype="float64") - offset) / scale)
+    ok = np.isfinite(v)
+    if int8:            # 1바이트로 강제: 범위 밖 값은 끝값으로 자른다 (양자화 간격을 그만큼 넉넉히 고른 장에만 쓴다)
+        v = np.where(ok, np.clip(v, -127, 127), v)
+    lo, hi = (v[ok].min(), v[ok].max()) if ok.any() else (0, 0)
+    dt_, fill = ("<i1", -128) if lo > -128 and hi <= 127 else ("<i2", -32768)
+    assert lo > -32768 and hi <= 32767, "int16 범위를 넘는다: 양자화 간격을 키워야 한다"
+    q = np.where(ok, v, fill).astype(dt_)
+    return dict(b64=base64.b64encode(q.tobytes()).decode(), dtype="i1" if dt_ == "<i1" else "i2")
+
+
+def grid(da, lat, lon, scale: float, offset: float = 0.0, pack: bool = False, int8: bool = False) -> dict:
     lat, lon = np.asarray(lat, float), np.asarray(lon, float)
-    return dict(lat0=round(float(lat[0]), 3), dlat=round(float(lat[1] - lat[0]), 3), nlat=int(lat.size),
-                lon0=round(float(lon[0]), 3), dlon=round(float(lon[1] - lon[0]), 3), nlon=int(lon.size),
-                scale=scale, offset=offset, v=_q(np.asarray(da), scale, offset))
+    out = dict(lat0=round(float(lat[0]), 3), dlat=round(float(lat[1] - lat[0]), 3), nlat=int(lat.size),
+               lon0=round(float(lon[0]), 3), dlon=round(float(lon[1] - lon[0]), 3), nlon=int(lon.size),
+               scale=scale, offset=offset)
+    if pack:
+        out.update(_pack(np.asarray(da), scale, offset, int8))
+    else:
+        out["v"] = _q(np.asarray(da), scale, offset)
+    return out
 
 
 def _r(x, nd=3):
@@ -125,7 +147,11 @@ def schematic_file(df: pd.DataFrame, end: pd.Timestamp, case: dict, days: int = 
     t0 = end - pd.Timedelta(days=days - 1)
     times = pd.date_range(t0, end)
     sl = dict(lat=slice(18, 90))
+    s3 = dict(lat=slice(None, None, 2), lon=slice(None, None, 2))    # 1.5° → 3°
+    s45 = dict(lat=slice(None, None, 3), lon=slice(None, None, 3))   # 1.5° → 4.5°
     out = dict(start=str(t0.date()), end=str(end.date()), n=len(times), fields={})
+    # 모든 장은 북반구(또는 전지구) 격자 그대로 싣는다. 동아시아만 따로 자르지 않는다.
+    # 화면에서 3차 보간으로 1.5° 간격까지 부드럽게 다시 그린다.
 
     def daily(name, anom=True):
         da = open_field(name).sel(time=slice(t0, end)).load()
@@ -133,31 +159,53 @@ def schematic_file(df: pd.DataFrame, end: pd.Timestamp, case: dict, days: int = 
             da = anomaly(da, field_clim(name))
         return da
 
-    z10 = daily("z10", anom=False).sel(**sl).isel(lat=slice(None, None, 3), lon=slice(None, None, 3))
+    def put(key, da, unit, sc, offset=0.0, int8=False):
+        out["fields"][key] = dict(unit=unit, **grid(da.values, da.lat, da.lon, sc, offset, pack=True, int8=int8))
+
+    # 10 hPa: 고도(극소용돌이 모양)와 기온 편차(승온)
+    put("z10", daily("z10", anom=False).sel(**sl).isel(**s45), "m", 10.0, 30000.0)
     # 극소용돌이 가장자리: 그날의 평년 60°N 동서평균 10 hPa 고도 (indices.strat.vortex_geometry와 같은 정의)
     edge = series_clim(open_field("z10").sel(lat=60.0).mean("lon").to_series())[t0:end]
-    out["fields"]["z10"] = dict(unit="m", **grid(z10.values, z10.lat, z10.lon, 10.0, 30000.0))
     out["z10_edge"] = edge.round(0).tolist()
-    for name, sc in (("z500", 5.0), ("msl", 0.5)):
-        da = daily(name).sel(**sl).isel(lat=slice(None, None, 3), lon=slice(None, None, 3))
-        out["fields"][f"{name}_anom"] = dict(unit="m" if name == "z500" else "hPa", **grid(da.values, da.lat, da.lon, sc))
-    u = daily("u250", anom=False).sel(**sl).isel(lat=slice(None, None, 3), lon=slice(None, None, 3))
-    out["fields"]["u250"] = dict(unit="m/s", **grid(u.values, u.lat, u.lon, 1.0))
-    t2 = daily("t2m").isel(lat=slice(None, None, 2), lon=slice(None, None, 2))
-    out["fields"]["t2m_anom"] = dict(unit="°C", **grid(t2.values, t2.lat, t2.lon, 0.5))
-    sst = open_field("sst").sel(time=slice(t0, end)).load()
-    sst = anomaly(sst, field_clim("sst")).sel(lat=slice(-15, 15), lon=slice(120, 285))
-    sst = sst.isel(lat=slice(None, None, 3), lon=slice(None, None, 3))
-    out["fields"]["sst_anom"] = dict(unit="°C", **grid(sst.values, sst.lat, sst.lon, 0.1))
-    # 파동활동 플럭스: 날마다 앞뒤 3일(7일) 평균 편차로 계산
+    put("t10_anom", daily("t10").sel(**sl).isel(**s45), "K", 0.2)
+    # 250 hPa 바람(풍속 등치선용), 500 hPa 고도 편차: 3°
+    # 용량(5 MB 안쪽)을 위해 1바이트로 싣는다: 바람 1 m/s(±127), 고도 편차 4 m(±508 m) 간격. 화면 등치선 간격(10 m/s, 60 m)보다 충분히 잘다
+    put("u250", daily("u250", anom=False).sel(**sl).isel(**s3), "m/s", 1.0, int8=True)
+    put("v250", daily("v250", anom=False).sel(**sl).isel(**s3), "m/s", 1.0, int8=True)
+    put("z500_anom", daily("z500").sel(**sl).isel(**s3), "m", 4.0, int8=True)
+    # 지상: 해면기압 편차, 해수면온도 편차, 해빙, 육지 2 m 기온 편차
+    put("msl_anom", daily("msl").sel(lat=slice(0, 90)).isel(**s45), "hPa", 0.4, int8=True)      # ±50 hPa
+    sst = daily("sst")
+    put("sst_anom", sst.sel(lat=slice(-30, 90)).isel(**s45), "°C", 0.1, int8=True)            # ±12.7 °C
+    ci = daily("ci", anom=False)
+    ci_clim = ci - daily("ci")
+    put("ci", ci.sel(lat=slice(39, 90)).isel(**s3), "비율", 0.01)
+    put("ci_clim", ci_clim.sel(lat=slice(39, 90)).isel(**s3), "비율", 0.01)
+    t2 = daily("t2m")
+    if float(t2.lat.min()) < 10:       # 북반구 전체로 받은 경우: 바다(해빙 없는 곳)는 해수면온도로 보이므로 육지만 싣는다
+        sea = sst.notnull().reindex(lat=t2.lat, lon=t2.lon, method="nearest") & \
+            (ci.reindex(lat=t2.lat, lon=t2.lon, method="nearest").fillna(0) < 0.15)
+        t2 = t2.where(~sea)
+    else:
+        log.warning("t2m이 동아시아 영역만 있어 모식도 지상 기온도 그 영역만 그린다 (fetch에서 북반구로 받아야 함)")
+    put("t2m_anom", t2.sel(lat=slice(0, 90)).isel(**s3), "°C", 0.2)
+    # 눈덮임 비율(눈 깊이에서 만든 0~1, forcing.ensure_snowc): 모식도가 50% 경계선을 그린다. 눈이 있을 수 있는 위도만 싣는다
+    if (C.DATA / "merged" / "snowc.nc").exists():
+        sc = daily("snowc", anom=False)
+        sc_clim = sc - daily("snowc")
+        lf = xr.open_dataarray(C.DATA / "static" / "landfrac_nh.nc").reindex(lat=sc.lat, lon=sc.lon, method="nearest")
+        land = lf >= C.LAND_MIN
+        put("snowc", sc.where(land).sel(lat=slice(21, 84)).isel(**s3), "비율", 0.01)
+        put("snowc_clim", sc_clim.where(land).sel(lat=slice(21, 84)).isel(**s3), "비율", 0.01)
+    # 파동활동 플럭스: 날마다 앞뒤 3일(7일) 평균 편차로 계산, 6° 간격
     fx, fy = [], []
     for t in times:
         a, b = t - pd.Timedelta(days=3), min(t + pd.Timedelta(days=3), end)
-        w = dynamics.tn_flux(a.date(), b.date()).sel(lat=slice(27, 81)).isel(lat=slice(None, None, 6), lon=slice(None, None, 6))
+        w = dynamics.tn_flux(a.date(), b.date()).sel(lat=slice(24, 84)).isel(lat=slice(None, None, 4), lon=slice(None, None, 4))
         fx.append(w.fx.values)
         fy.append(w.fy.values)
-    out["fields"]["waf_fx"] = dict(unit="m²/s²", **grid(np.stack(fx), w.lat, w.lon, 0.5))
-    out["fields"]["waf_fy"] = dict(unit="m²/s²", **grid(np.stack(fy), w.lat, w.lon, 0.5))
+    out["fields"]["waf_fx"] = dict(unit="m²/s²", **grid(np.stack(fx), w.lat, w.lon, 0.5, pack=True))
+    out["fields"]["waf_fy"] = dict(unit="m²/s²", **grid(np.stack(fy), w.lat, w.lon, 0.5, pack=True))
     pch = xr.open_dataarray(C.DATA / "derived" / "pch.nc").sel(time=slice(t0, end))
     out["pch"] = dict(levels=[int(l) for l in pch.level.values], v=_q(pch.values, 0.1))
     d = df.reindex(times)
@@ -173,6 +221,32 @@ def schematic_file(df: pd.DataFrame, end: pd.Timestamp, case: dict, days: int = 
                           label="SSW 발생(주 승온)" if case["kind"] == "major" else "성층권 승온(부 승온)"))
     out["marks"] = sorted(marks, key=lambda m: m["date"])
     return out
+
+
+# ------------------------------------------------------------------ 강제인자 영역
+def forcing_file() -> dict:
+    """대시보드 '강제인자' 영역: 현재 편차 표, 시차 상관, 회귀 비교, 최근 30일 편차 지도(3°, 15°N 이북)."""
+    S = json.loads((C.OUT / "forcing_summary.json").read_text())
+    maps = {}
+    units = {"sst": ("해수면온도", "°C", 0.05), "ci": ("해빙 농도", "%p", 0.5), "snowc": ("눈덮임 비율", "%p", 0.5),
+             "swvl1": ("토양수분(0~7 cm)", "%p", 0.05), "t2m": ("육지 2 m 기온", "°C", 0.05)}
+    p = C.DATA / "derived" / "forcing_maps.nc"
+    if p.exists():
+        ds = xr.open_dataset(p)
+        for k, (label, unit, sc) in units.items():
+            da = ds[k].sel(lat=slice(15, 90)).isel(lat=slice(None, None, 2), lon=slice(None, None, 2))
+            maps[k] = dict(label=label, unit=unit, period="최근 30일", **grid(da.values, da.lat, da.lon, sc))
+    p = C.DATA / "derived" / "skt_latest.nc"
+    if p.exists():
+        da = xr.open_dataset(p)["skt"]
+        lf = xr.open_dataarray(C.DATA / "static" / "landfrac_nh.nc").reindex(lat=da.lat, lon=da.lon, method="nearest")
+        da = da.where(lf >= C.LAND_MIN).sel(lat=slice(15, 90)).isel(lat=slice(None, None, 2), lon=slice(None, None, 2))
+        maps["skt"] = dict(label="지면온도(월평균)", unit="°C", period=str(da.time.values)[:7], **grid(da.values, da.lat, da.lon, 0.05))
+    lc = [{k: r[k] for k in ("season", "forcing", "target", "lag", "r", "lo", "hi", "p", "q", "n", "verdict", "fdr")} for r in S["lagcorr"]]
+    return dict(end=S["end"], target_month=S["target_month"], last_year=S["last_year"], lags=S["lags"],
+                season_months=S["season_months"], forcings=S["forcings"], targets=S["targets"], current=S["current"],
+                lagcorr=lc, regression=S["regression"], substitute=S["substitute"], skt_last=S["skt_last"],
+                snow_definition=S["snow_definition"], sentences=S["sentences"], counts=S["counts"], maps=maps)
 
 
 def coastlines() -> dict:
@@ -231,6 +305,8 @@ def run(end, periods_res: list[dict], r2_rows: list[dict], case: dict, df: pd.Da
     sizes["indices"] = _dump(indices_file(df, end), DATA / "indices.json")
     sizes["ssw"] = _dump(ssw_file(case, end), DATA / "ssw.json")
     sizes["schematic"] = _dump(schematic_file(df, end, case), DATA / "schematic.json")
+    if (C.OUT / "forcing_summary.json").exists():
+        sizes["forcing"] = _dump(forcing_file(), DATA / "forcing.json")
     coast = DATA / "coast.json"
     if not coast.exists():
         sizes["coast"] = _dump(coastlines(), coast)

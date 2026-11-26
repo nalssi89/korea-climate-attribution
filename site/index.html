@@ -85,6 +85,25 @@
     <div class="grid2" style="margin-top:12px" id="sswHist"></div>
   </section>
 
+  <section id="forcingSec">
+    <h2>강제인자 <span class="small">(해빙·해수면온도·눈덮임·지면온도·토양수분)</span></h2>
+    <div class="card"><ul class="sent" id="fcSent"></ul></div>
+    <h3>현재 편차</h3>
+    <div class="card"><ul class="sent" id="fcState"></ul><div class="tw" style="margin-top:10px" id="fcTable"></div><p class="small" id="fcTableNote"></p></div>
+    <h3>과거 시차 상관과 편차 지도</h3>
+    <div class="row">
+      <select id="fcTarget" aria-label="상관 대상"></select>
+      <div class="tabs" id="fcSeason"></div>
+      <div class="tabs" id="fcLag"></div>
+    </div>
+    <div class="grid2" style="margin-top:10px">
+      <div class="card"><div class="chart" id="fcBars"></div><p class="small" id="fcBarNote"></p></div>
+      <div class="card mapbox"><div class="tabs" id="fcMapTabs" style="margin-bottom:8px"></div>
+        <canvas id="fcMap" width="600" height="600" aria-label="강제인자 편차 지도(극투영)"></canvas><div class="tip" id="fcTip"></div>
+        <div class="legend" id="fcLegend"></div><p class="small" id="fcMapNote"></p></div>
+    </div>
+  </section>
+
   <section>
     <h2>방법과 한계</h2>
     <div class="card small" id="methods"></div>
@@ -93,5 +112,6 @@
 <footer><div class="wrap" id="footer"></div></footer>
 <script src="assets/viz.js"></script>
 <script src="assets/app.js"></script>
+<script src="assets/forcing.js"></script>
 </body>
 </html>

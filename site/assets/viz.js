@@ -8,9 +8,19 @@ V.css = (name) => getComputedStyle(document.documentElement).getPropertyValue(na
 V.isDark = () => getComputedStyle(document.documentElement).colorScheme.includes("dark");
 
 // ---------------------------------------------------------------- 격자
+// v: 정수 목록(null = 결측) 또는 b64: int8/int16 리틀엔디언 묶음(가장 작은 정수 = 결측, src/export.py의 _pack)
 V.decode = (g) => {
+  const off = g.offset || 0;
+  if (g.b64) {
+    const bin = atob(g.b64), u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const q = g.dtype === "i1" ? new Int8Array(u8.buffer) : new Int16Array(u8.buffer), fill = g.dtype === "i1" ? -128 : -32768;
+    const a = new Float32Array(q.length);
+    for (let i = 0; i < q.length; i++) a[i] = q[i] === fill ? NaN : q[i] * g.scale + off;
+    return { lat0: g.lat0, dlat: g.dlat, nlat: g.nlat, lon0: g.lon0, dlon: g.dlon, nlon: g.nlon, a };
+  }
   const n = g.v.length, a = new Float32Array(n);
-  for (let i = 0; i < n; i++) a[i] = g.v[i] === null ? NaN : g.v[i] * g.scale + (g.offset || 0);
+  for (let i = 0; i < n; i++) a[i] = g.v[i] === null ? NaN : g.v[i] * g.scale + off;
   return { lat0: g.lat0, dlat: g.dlat, nlat: g.nlat, lon0: g.lon0, dlon: g.dlon, nlon: g.nlon, a };
 };
 // 2차원(또는 시간 x 위도 x 경도) 격자에서 t번째 판을 꺼낸다
@@ -291,7 +301,7 @@ V.lineChart = (box, o) => {
 // 가로 막대 (기여도): rows = [{label, value, lo, hi, kind}]
 V.barChart = (box, rows, o) => {
   box.innerHTML = "";
-  const rowH = 26, W = 640, m = { l: 150, r: 64, t: 24, b: 20 }, H = m.t + m.b + rows.length * rowH;
+  const rowH = 26, W = 640, m = { l: o.ml || 150, r: 64, t: 24, b: 20 }, H = m.t + m.b + rows.length * rowH;
   const svg = V.el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.title }); box.appendChild(svg);
   let lo = 0, hi = 0;
   for (const r of rows) for (const v of [r.value, r.lo, r.hi]) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }

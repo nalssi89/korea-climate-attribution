@@ -27,7 +27,8 @@ STORES = {
 SHORT = {"geopotential": "z", "u_component_of_wind": "u", "v_component_of_wind": "v",
          "temperature": "t", "specific_humidity": "q", "mean_sea_level_pressure": "msl",
          "2m_temperature": "t2m", "total_precipitation": "tp",
-         "sea_surface_temperature": "sst", "sea_ice_cover": "siconc"}
+         "sea_surface_temperature": "sst", "sea_ice_cover": "siconc",
+         "snow_depth": "sd", "volumetric_soil_water_layer_1": "swvl1"}
 
 
 def _open(kind: str) -> xr.Dataset:

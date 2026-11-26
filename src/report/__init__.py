@@ -62,6 +62,88 @@ def _rank(r: dict) -> str:
     return f"{r['n_years']}개 해 중 높은 순 {r['rank_high']}위"
 
 
+PER_LABEL = {"last7": "최근 7일", "last30": "최근 30일", "month": "이번 달(진행 중)", "pentad": "이번 반순(진행 중)"}
+
+
+def forcing_section(F: dict) -> list[str]:
+    """5-1절: 지면·해양 강제인자. 문장과 표는 forcing_summary.json의 수치에서 그대로 만든다."""
+    H = ["<h2>5-1. 지면·해양 강제인자(해빙, 해수면온도, 눈덮임, 지면온도, 토양수분)</h2>"]
+    tm = F["target_month"]
+    H.append("<p>각 강제인자를 문헌에 쓰인 영역의 평균 편차로 지수화하고(정의와 출처는 아래 표와 <code>src/config.py</code>의 "
+             "<code>FORCING</code>), 지금의 편차와 과거(1979년~지난해)의 시차 상관을 본다. 시차 상관은 월평균에서 달별 선형 추세를 뺀 뒤 "
+             f"강제인자가 0~2개월 앞설 때 계산했다. 유의성은 해(겨울) 단위 부트스트랩 {F['n_boot']}회 95% 구간으로 판정하고, "
+             "자기상관을 고려한 유효 표본 p값과 다중검정 보정(Benjamini-Hochberg FDR, q&lt;0.10)을 함께 적는다.</p>")
+    H.append("<h3>지수 정의</h3>")
+    H.append(_table(["지수", "분류", "장", "영역 (남·북·서·동)", "격자", "근거"],
+                    [[sp["label"], sp["group"], sp["field"] + (" (월평균, CDS)" if sp.get("monthly") else " (일별)"),
+                      " · ".join(f"{v:g}" for v in sp["region"]),
+                      {"sea": "바다", "land": f"육지 비율 ≥ {C.LAND_MIN:g}"}.get(sp["surface"], "-"),
+                      f"<div style='white-space:normal;min-width:240px;text-align:left'>{sp['ref']}</div>"]
+                     for sp in F["forcings"].values()]))
+    sub = F.get("substitute")
+    H.append("<ul>"
+             f"<li><b>눈덮임</b>: ERA5 일평균 눈 깊이(물당량)에서 만든다. {F['snow_definition']}. 물당량 15 mm는 눈 밀도 100~300 kg/m³에서 "
+             "적설 약 5~15 cm에 해당한다. ECMWF IFS 지면 모형의 눈덮임 비율 식(임계 15 kg/m²)과 같은 꼴이다. 1.5° 평균 깊이에 적용하므로 "
+             "실제 위성 눈덮임 면적과는 다를 수 있다.</li>"
+             + ("<li><b>지면온도</b>: WeatherBench2 일평균에는 지면온도(skin temperature)가 없어 CDS "
+                "<code>reanalysis-era5-single-levels-monthly-means</code>를 한 번 요청해 1979년~"
+                f"{F['skt_last']} 월평균(1.5°, 북반구)을 받았다. 일 단위 현재 상태는 같은 영역의 육지 2 m 기온으로 대신한다. "
+                f"두 지수의 월 편차 상관은 {sub['r']:.2f}(추세 제거 {sub['r_detrended']:.2f}, {sub['period']}, {sub['n']}개월)이다.</li>"
+                if sub else
+                "<li><b>지면온도</b>: CDS 월평균을 받지 못해 같은 영역의 육지 2 m 기온 지수로만 대신했다.</li>")
+             + "<li><b>토양수분</b>: ERA5 1층(0~7 cm) 체적함수율. 겨울에 땅이 얼면 값이 액체 수분만 반영해 낮아지므로 늦가을~겨울 편차는 "
+               "동결 시점의 차이를 함께 담는다.</li></ul>")
+    # 현재 상태
+    H.append("<h3>현재 상태</h3>")
+    from ..forcing import _word
+    rows = []
+    for k, row in F["current"].items():
+        sp = F["forcings"][k]
+        unit = "" if sp["unit"] == "σ" else " " + sp["unit"]
+        nd = 2 if sp["unit"] in ("σ", "°C") else 1
+        cell = lambda st: "–" if not st else f"{_s(st['value'], nd)}{unit} ({st['sigma']:+.1f}σ)"
+        main = row.get("last30") or row.get("latest_month")
+        if "latest_month" in row:
+            c = ["–", f"{cell(main)}<br><span class='sub'>{main['month']} 월평균</span>", "–", "–"]
+        else:
+            c = [cell(row.get(p)) for p in ("last7", "last30", "month", "pentad")]
+        rows.append([sp["label"]] + c + [f"{main['percentile']:.0f}", f"{main['n_years']}개 해 중 {main['rank_high']}위", _word(k, main["sigma"])])
+    H.append(_table(["지수", "최근 7일", "최근 30일", "이번 달(진행 중)", "이번 반순(진행 중)", "백분위", "높은 순", "판정"], rows))
+    H.append(f"<p class='sub'>값은 편차, 괄호는 평년(1991~2020) 같은 날짜 구간 기준 표준화 편차. 백분위·순위·판정은 최근 30일(지면온도는 최근 월) 기준, "
+             f"{C.START_YEAR}년 이후 같은 날짜 구간과 비교. 자료 끝 {F['end']}.</p>")
+    H.append("<ul>" + "".join(f"<li>{x}</li>" for x in F["sentences"]["state"]) + "</ul>")
+    H.append(_img("fig15_forcing_maps.png", "그림 15. 최근 30일 강제인자 편차장(지면온도는 최근 월평균). 점선 상자는 지수 영역."))
+    # 시차 상관
+    H.append("<h3>과거 시차 상관</h3>")
+    H.append(f"<p>{F['sentences']['overview']}</p>")
+    H.append("<ul>" + "".join(f"<li>{x}</li>" for x in F["sentences"]["lag"]) + "</ul>")
+    sig = [r for r in F["lagcorr"] if r["verdict"] == "유의함"]
+    sig.sort(key=lambda r: (r["season"] != "month", -abs(r["r"])))
+    if sig:
+        H.append(_table(["대상 달", "강제인자", "대상", "시차", "r", "95% 구간", "유효 표본 p", "FDR q", "표본"],
+                        [[f"{tm}월" if r["season"] == "month" else "11~3월 묶음", F["forcings"][r["forcing"]]["label"],
+                          F["targets"][r["target"]], f"{r['lag']}개월", f"{r['r']:+.2f}", f"{r['lo']:+.2f} ~ {r['hi']:+.2f}",
+                          f"{r['p']:.3f}", f"{r['q']:.2f}" + (" ✓" if r["fdr"] else ""), str(r["n"])] for r in sig[:30]]))
+        H.append("<p class='sub'>95% 구간이 0을 벗어난 조합만 보인다(최대 30개). 11~3월 묶음의 p값은 부트스트랩에서 구했다. "
+                 "전체 표는 <code>outputs/forcing_lagcorr.csv</code>.</p>")
+    H.append(_img("fig16_forcing_lagcorr.png", "그림 16. 강제인자와 대상 지수의 시차 상관 행렬."))
+    # 회귀 비교
+    H.append("<h3>기존 회귀에 넣었을 때</h3>")
+    H.append("<ul>" + "".join(f"<li>{x}</li>" for x in F["sentences"]["regression"]) + "</ul>")
+    reg = [r for r in F["regression"] if r["target"] in ("korea_t", "ea_t")]
+    if reg:
+        H.append(_table(["대상", "강제인자(1개월 앞)", "R²cv 기존", "R²cv 추가", "ΔR²cv", "표준화 계수", "90% 구간", "판정", "이번 달 기여"],
+                        [[F["targets"][r["target"]], F["forcings"][r["forcing"]]["label"], f"{r['r2cv_base']:.2f}",
+                          f"{r['r2cv_with']:.2f}", f"{r['d_r2cv']:+.2f}", f"{r['coef']:+.2f}", f"{r['lo']:+.2f} ~ {r['hi']:+.2f}",
+                          r["verdict"], "–" if r["contribution"] is None else _s(r["contribution"], 2, "°C")] for r in reg]))
+        H.append(f"<p class='sub'>{tm}월 월평균(해마다 1개) 회귀. 기존 인자: 장기 추세, 우랄 Z500·극소용돌이·Niño3.4(같은 달), 바렌츠-카라 해빙(1개월 앞). "
+                 "강제인자의 시차는 결과를 보고 고르지 않도록 1개월로 미리 정했다. 이번 달 기여 = 계수 x 지난달 강제인자의 표준화 값.</p>")
+    if F["sentences"]["implication"]:
+        H.append("<h3>지금 편차와 과거 관계의 방향</h3><ul>" + "".join(f"<li>{x}</li>" for x in F["sentences"]["implication"]) + "</ul>")
+        H.append("<p class='sub'>지금 |σ| ≥ 0.5인 강제인자 가운데 과거 1~2개월 시차 상관이 유의했던 것만 적었다. 방향은 선형 상관의 부호일 뿐 예측이 아니다.</p>")
+    return H
+
+
 def run():
     rec = json.loads((C.OUT / "recent_summary.json").read_text())
     att = json.loads((C.OUT / "attribution.json").read_text())
@@ -291,6 +373,11 @@ def run():
     H.append("<p class='sub'>연결 고리 인자는 원인 인자의 영향이 한반도로 전달되는 경로라서 회귀의 예측인자로 넣지 않고 상관만 본다.</p>")
     H.append(_img("fig10_monthly_coefficients.png", "그림 10. 달별·겨울철 표준화 회귀계수."))
 
+    # ------------------------------------------------------------ 강제인자
+    fp = C.OUT / "forcing_summary.json"
+    if fp.exists():
+        H.extend(forcing_section(json.loads(fp.read_text())))
+
     # ------------------------------------------------------------ 사례
     H.append(f"<h2>6. 최근 {len(att['cases'])}개 겨울 사례</h2>")
     H.append(_table(["겨울", "엔소 (DJF ONI)", "DJF 기온 편차", "DJF 강수 평년비", "DJF AO", "DJF 우랄 Z500",
@@ -327,7 +414,10 @@ def run():
              "회귀는 선형이고 시차를 미리 정해 두었으며, 사건의 강도·위치 차이는 반영하지 못한다.</li>"
              "<li><b>자료</b>: 한반도 값은 1.5° ERA5 격자 평균이라 관측소 평균과 다를 수 있다. "
              f"{C.ARCO_FIRST} 이후 대규모장은 하루 4시각 평균이고, 최근 약 3개월은 ERA5T(잠정) 자료다. "
-             "엔소 지수는 ERA5 해수면온도와 고정 평년(1991~2020)을 써서 NOAA 공식 ONI와 다를 수 있다.</li></ul>")
+             "엔소 지수는 ERA5 해수면온도와 고정 평년(1991~2020)을 써서 NOAA 공식 ONI와 다를 수 있다.</li>"
+             "<li><b>강제인자 상관</b>: 강제인자와 대기는 서로 영향을 주고받는다. 같은 달 상관(시차 0)은 대기가 지면·해양을 바꾼 결과일 수 있고, "
+             "1~2개월 앞선 상관도 인과를 뜻하지 않는다. 인자·대상·시차 조합이 많아 일부는 우연히 유의하게 나오므로 FDR 통과 여부를 함께 본다. "
+             "눈덮임은 눈 깊이에서 만든 근사치이고, 토양수분은 겨울 동결의 영향을 받는다.</li></ul>")
 
     # ------------------------------------------------------------ 실행 상태
     H.append("<h2>8. 실행 상태와 자료 검증</h2>")

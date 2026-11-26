@@ -64,3 +64,18 @@ def contribution_sentence(name: str, res: dict, unit: str) -> str:
     else:
         head += " 신뢰구간이 0을 벗어난 인자는 없다."
     return head
+
+
+def josa(word: str, pair: str) -> str:
+    """받침에 따라 조사를 고른다. pair = "은/는", "이/가", "와/과", "을/를". 괄호 속 설명은 빼고 마지막 글자로 판단한다."""
+    import re
+    w = re.sub(r"\([^)]*\)\s*$", "", word).strip() or word
+    a, b = pair.split("/")          # a: 받침 있을 때, b: 없을 때 (와/과는 반대)
+    if pair == "와/과":
+        a, b = "과", "와"
+    c = w[-1]
+    if "가" <= c <= "힣":
+        has = (ord(c) - 0xAC00) % 28 != 0
+    else:                            # 숫자·로마자: 읽는 소리의 받침 (0 영, 1 일, 3 삼, 6 육, 7 칠, 8 팔, L 엘, M 엠, N 엔, R 알)
+        has = c in "013678LMNRlmnr"
+    return word + (a if has else b)

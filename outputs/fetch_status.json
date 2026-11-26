@@ -4,7 +4,8 @@
   "storage.googleapis.com": "도달",
   "arco.datastores.ecmwf.int": "도달",
   "apihub.kma.go.kr": "도달",
-  "ECMWF ARCO": "기압면 2026-11-20T18:00까지, 층 50~1000 hPa(10·30 hPa 없음), 해빙 없음. Google 완결 자료(2026-11-18) 뒤 2026-11-20까지 빠진 항목 보충, 겹치는 날 교차 검증",
+  "CDS 월평균 지면온도": "요청 중 (다른 프로세스가 CDS 대기열에서 기다리는 중, 다음 실행에서 반영)",
+  "ECMWF ARCO": "기압면 2026-11-20T18:00까지, 층 50~1000 hPa(10·30 hPa 없음), 해빙 없음. Google 완결 자료(2026-11-18) 뒤 2026-11-19까지 빠진 항목 보충, 겹치는 날 교차 검증",
   "ECMWF ARCO 범위": {
     "pl_end": "2026-11-20T18:00",
     "sl_end": "2026-11-20T23:00",
@@ -27,8 +28,7 @@
     "has_siconc": false
   },
   "최근 날짜 혼합 채움": [
-    "2026-11-19: 이미 있음 (Google: z250,u200,u250,u300,v250,v850,t850,q850,v100,t100,z10,t10,cap30,cap50,cap200,cap300,cap700,cap1000,u1060,msl,t2m,tp,sst,ci; ECMWF ARCO: z500,u850,cap100,cap150,cap850)",
-    "2026-11-20: ECMWF ARCO ['u300', 'v850', 'v100', 'cap50'], CDS API ['t10']"
+    "2026-11-19: 이미 있음 (Google: z250,u200,u250,u300,v250,v850,t850,q850,v100,t100,z10,t10,cap30,cap50,cap200,cap300,cap700,cap1000,u1060,msl,t2m,tp,sst,ci,sd,swvl1; ECMWF ARCO: z500,u850,cap100,cap150,cap850)"
   ],
   "ECMWF ARCO 교차 검증": {
     "date": "2026-11-18",
@@ -57,6 +57,6 @@
   },
   "KMA ASOS": "완료: 1개 해 새로 받음 (키 이름 KMA_AUTHKEY)",
   "NOAA ONI": "건너뜀: cpc.ncep.noaa.gov에 닿지 않음 (ProxyError)",
-  "자료 끝 날짜": "2026-11-20",
+  "자료 끝 날짜": "2026-11-19",
   "Google ARCO-ERA5 원시 자료 끝": "2026-11-18"
 }

@@ -5,7 +5,7 @@ import pandas as pd
 import xarray as xr
 
 from .. import config as C
-from ..common import atomic_to_netcdf, get_logger, open_field
+from ..common import atomic_to_netcdf, ea_crop, get_logger, open_field
 
 log = get_logger("indices")
 
@@ -21,7 +21,8 @@ def run() -> pd.DataFrame:
     n34, oni = enso.compute(open_field("sst").load())
     circ = circulation.compute(open_field("msl").load(), open_field("u200").load(),
                                open_field("u300").load(), open_field("ci").load())
-    t2m, tp = open_field("t2m").load(), open_field("tp").load()
+    # 2 m 기온은 북반구로 저장돼 있다. 동아시아 지수는 예전과 같은 영역만 잘라 쓴다
+    t2m, tp = ea_crop(open_field("t2m")).load(), open_field("tp").load()
     kor = korea.compute(t2m, tp)
     ea = korea.ea_regions(t2m, tp)
     tele, tele_meta, tele_pat = teleconnections.compute(z500)

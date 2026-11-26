@@ -31,7 +31,9 @@ ERA5와 KMA 관측으로 최근 한 달 북반구 전체의 기후인자를 찾�
 | ERA5 일평균 대규모장 1979~2022 (Z500, U200, T850, SLP 등) | WeatherBench2 1.5° Zarr (익명) | 평년값, 과거 통계 관계 |
 | ERA5 기압면 2023~현재 (북반구, 00/12UTC) | ECMWF ARCO Zarr (`CDSAPI_KEY`) | 최근 겨울, 최근 한 달 |
 | 10 hPa 동서풍(60°N), 극관 고도(65~90°N, 10~1000 hPa) | Google ARCO-ERA5 (익명), 필요한 위도대만 | SSW, 하향 전파 |
-| SST, 해빙, 동아시아 t2m·강수 | ECMWF ARCO 지상 자료 | Niño3.4, 바렌츠-카라 해빙, 동아시아 격자·영역 평균 |
+| SST, 해빙, 북반구 t2m, 동아시아 강수 | ECMWF ARCO 지상 자료 | Niño3.4, 바렌츠-카라 해빙, 동아시아 격자·영역 평균 |
+| 눈 깊이, 토양수분(0~7 cm) | WB2, Google ARCO 원시 자료 | 8단계 강제인자 |
+| 지면온도 월평균 1979~최근 | CDS API 1건 (monthly means) | 8단계 강제인자 |
 | ASOS 일자료 (전국 평균 기온·강수) | KMA API 허브 (`KMA_API_KEY`) | 관측 기준값, ERA5 검증 |
 
 규칙
@@ -136,6 +138,31 @@ ERA5와 KMA 관측으로 최근 한 달 북반구 전체의 기후인자를 찾�
 - 화면에 현재 날짜와 핵심 지수값(10 hPa 60°N 바람, 우랄 지수, AO, Niño3.4)을 함께 표시한다.
 - 층 켜기/끄기, 회전·확대, 휴대폰에서도 동작. three.js는 cdnjs 고정 버전을 쓴다.
 - 자료는 2.5° 안팎으로 줄인 일별 JSON으로 내보내 용량을 작게 유지한다.
+
+## 8단계: 지면·해양 강제인자 연관성 분석 (`src/forcing.py`)
+
+사용자 요청(2026-11-26): 해빙, 해수면온도, 눈덮임, 지면온도, 토양수분이 최근 동아시아(한반도 포함) 기온·강수 편차와
+북반구 순환(우랄블로킹, AO, 극소용돌이 세기 `pv`, 100 hPa 열속 `vt100`)과 연관이 있는지 객관적으로 본다.
+
+- **자료**
+  - 일별 장: WB2(1979~2022)와 Google ARCO 원시 자료(2023~)의 `sea_ice_cover`, `sea_surface_temperature`, `snow_depth`(`sd`),
+    `volumetric_soil_water_layer_1`(`swvl1`), 북반구 `2m_temperature`. 1단계 수집에 더해 같은 방식으로 병합한다.
+  - 지면온도: WB2에 없어 CDS `reanalysis-era5-single-levels-monthly-means` 1건(1979~최근, 1.5°, 북반구, `skin_temperature`,
+    `soil_temperature_level_1`)으로 월평균을 받는다(`src/fetch/cds_monthly.py`). 일 단위 현재 상태는 같은 영역의 육지 2 m 기온으로 대신하고,
+    두 지수의 월 상관을 보고서에 적어 대용의 근거로 삼는다.
+  - 눈덮임 비율: 눈 깊이(물당량)에서 `min(1, SD / 15 mm)`로 만든다(`config.SNOW_SWE_FULL`).
+- **지수**: 문헌 영역 지수. 정의와 출처는 `config.FORCING`. 바렌츠-카라·오호츠크해 해빙, PDO, 쿠로시오-오야시오 확장역·한반도 주변 해역·Niño3.4 SST,
+  유라시아·티베트고원 눈덮임, 몽골·시베리아 남부 토양수분, 유라시아 육지 2 m 기온, 유라시아 지면온도(월평균).
+- **현재 상태**: 최근 7일, 30일, 이번 달, 이번 반순 편차를 σ와 백분위로 (1979년 이후 같은 날짜 구간 대비).
+- **시차 상관**: 1979~지난해 월평균, 달별 선형 추세 제거, 강제인자가 0~2개월 앞설 때. 대상 달(분석 끝 날짜의 달) 하나와 11~3월 묶음 두 가지.
+  유의성은 해(겨울) 단위 부트스트랩 95% 구간, 자기상관을 고려한 유효 표본 p값(Bretherton et al. 1999), 다중검정 보정(BH FDR q<0.10)을 함께 낸다.
+- **회귀 비교**: 4단계 회귀 인자(추세, 우랄, 극소용돌이, Niño3.4, 바렌츠-카라 해빙)에 강제인자 하나를 미리 정한 1개월 시차로 더해
+  교차검증 R² 변화, 표준화 계수의 부트스트랩 90% 구간, 이번 달 기여를 낸다.
+- **산출물**: `outputs/forcing_daily.csv`, `forcing_monthly.csv`, `forcing_current.csv`, `forcing_lagcorr.csv`, `forcing_regression.csv`,
+  `forcing_summary.json`, 그림 `fig15_forcing_maps.png`, `fig16_forcing_lagcorr.png`, 보고서 5-1절, 대시보드 '강제인자' 영역(`site/data/forcing.json`,
+  `site/assets/forcing.js`). 모식도에는 눈덮임 50% 경계(`snowc`, `snowc_clim`)를 내보낸다.
+- 문장은 `narrative` 규칙대로 수치에서 만들고, 구간이 0을 포함하면 "유의하지 않음"이라 쓴다. 상관은 인과가 아니며, 같은 달 상관은 대기가 지면·해양을
+  바꾼 결과일 수 있음을 함께 적는다.
 
 ## 한계
 

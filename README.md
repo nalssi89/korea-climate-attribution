@@ -23,7 +23,7 @@ python -m src.run --end 2026-11-18   # 끝 날짜 지정 (그날까지 30일을 
 python -m src.run --skip-fetch       # 받아 둔 자료로 계산과 보고서만 다시
 ```
 
-`fetch → indices → diagnose → attribute → report` 순서로 돌고, 이미 받은 파일은 건너뛴다.
+`fetch → indices → diagnose → attribute → forcing → report → site` 순서로 돌고, 이미 받은 파일은 건너뛴다.
 처음 실행하면 약 15 GB를 `data/`에 받는다.
 
 | 단계 | 코드 | 산출물 |
@@ -32,6 +32,7 @@ python -m src.run --skip-fetch       # 받아 둔 자료로 계산과 보고서�
 | 2 지수 계산 | `src/indices/` | `outputs/indices_daily.csv`, `outputs/events_*.csv`, `outputs/oni_monthly.csv` |
 | 3 최근 한 달 진단 | `src/diagnose/` | `reports/figures/fig01~05`, `outputs/recent_summary.json` |
 | 4 인자별 영향 | `src/attribute/` | `reports/figures/fig06~11`, `outputs/attribution.json` |
+| 8 강제인자 | `src/forcing.py` | `outputs/forcing_*.csv/json`, `reports/figures/fig15~16` |
 | 5 보고서 | `src/report/` | `reports/report_YYYY-MM-DD.html`, `reports/latest.html` |
 | 기간 단위 | `src/periods.py`, `src/attribute/periods.py` | `outputs/periods_summary.json` (반순·주·월·최근 7일·30일) |
 | SSW 사례 | `src/diagnose/ssw.py` | `outputs/ssw_case.json`, `reports/figures/fig12~13` |

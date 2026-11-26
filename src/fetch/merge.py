@@ -12,7 +12,8 @@ from ..common import atomic_to_netcdf, get_logger
 from . import arco_raw as A
 
 log = get_logger("fetch.merge")
-DIMS = {"sst": ("lat_sst", "lon"), "t2m": ("lat_ea", "lon_ea"), "tp": ("lat_ea", "lon_ea")}
+DIMS = {"sst": ("lat_sst", "lon"), "tp": ("lat_ea", "lon_ea")}
+MAY_HAVE_NAN = ("sst", "ci", "sd", "swvl1")      # 바다·육지에만 정의된 장
 
 
 def _round(ds):
@@ -33,6 +34,8 @@ def _up_to_date(path, end: dt.date) -> bool:
     if not path.exists():
         return False
     with xr.open_dataset(path) as ds:
+        if path.stem == "t2m" and float(ds.lat.min()) > 1.0:     # 예전에 동아시아만 병합한 파일
+            return False
         return pd.Timestamp(ds.time.values[-1]).date() == end and \
             pd.Timestamp(ds.time.values[0]).year == C.START_YEAR
 
@@ -71,7 +74,7 @@ def build(end: dt.date) -> None:
         da = xr.concat([w, a], "time").astype("float32").rename(name)
         assert da.time.to_index().is_unique and len(da.time) == (end - dt.date(C.START_YEAR, 1, 1)).days + 1, \
             f"{name}: 날짜가 빠졌거나 겹친다"
-        if name not in ("sst", "ci"):
+        if name not in MAY_HAVE_NAN:
             assert not bool(da.isnull().any()), f"{name}: 결측이 있다"
         atomic_to_netcdf(da.to_dataset(), out / f"{name}.nc")
         log.info("병합 %s %s", name, dict(da.sizes))

@@ -7,7 +7,9 @@ Zarr 저장소는 기압면 한 시각이 37층 전구 한 덩어리(약 118 MB)
 - 그 뒤 파일: 압축된 netCDF4(HDF5) → h5py로 필요한 청크만 읽는다.
   (형식은 날짜가 아니라 파일 첫 바이트로 가린다.)
 
-기압면·해면기압은 00/06/12/18 UTC 평균, 기온·강수는 24시각 평균·합, 해수면온도·해빙은 00 UTC.
+기압면·해면기압·눈 깊이·토양수분은 00/06/12/18 UTC 평균, 기온·강수는 24시각 평균·합, 해수면온도·해빙은 00 UTC.
+2 m 기온은 북반구 전체(0~90°N)를 24시각 평균으로 받는다. 동아시아 지수가 예전(동아시아만 받던 때)과 같은 값이 되게
+시각 수를 줄이지 않았다. 강수는 동아시아 영역만 받는다.
 0.25° 자료를 WeatherBench2와 같은 1.5° 격자로 상자 평균해 하루 한 파일로 저장한다.
 """
 from __future__ import annotations
@@ -75,10 +77,12 @@ def items() -> list[Item]:
     s = C.SFC_FIELDS
     out.append(Item("msl", f"SL/{s['msl']}/surface.nc", H6, nh, "nh"))
     ea_rows, ea_cols = _rows(*C.EA_LAT), _cols(*C.EA_LON)
-    out.append(Item("t2m", f"SL/{s['t2m']}/surface.nc", H24, ea_rows, "ea", ea_cols))
+    out.append(Item("t2m", f"SL/{s['t2m']}/surface.nc", H24, nh, "nh"))
     out.append(Item("tp", f"SL/{s['tp']}/surface.nc", H24, ea_rows, "ea", ea_cols))
     out.append(Item("sst", f"SL/{s['sst']}/surface.nc", (0,), _rows(C.LAT_SST[0], 90), "sst"))
     out.append(Item("ci", f"SL/{s['ci']}/surface.nc", (0,), nh, "nh"))
+    out.append(Item("sd", f"SL/{s['sd']}/surface.nc", H6, nh, "nh"))
+    out.append(Item("swvl1", f"SL/{s['swvl1']}/surface.nc", H6, nh, "nh"))
     return out
 
 
@@ -243,7 +247,8 @@ def reduce_day(arrs: dict[str, np.ndarray], its: list[Item]) -> xr.Dataset:
                 day = day / 100.0
             dims = ("lat_sst", "lon") if it.kind == "sst" else ("lat", "lon")
             ds[it.key] = (dims, box_regrid(day, *_weights(it, tgt, C.LON)))
-    ds["pcap"] = ("level", np.array([cap[l] for l in C.PCAP_LEVELS], dtype="float32"))
+    if cap:
+        ds["pcap"] = ("level", np.array([cap[l] for l in C.PCAP_LEVELS], dtype="float32"))
     return ds.assign_coords(lat=C.LAT_NH, lon=C.LON, lat_sst=C.LAT_SST, lat_ea=EA_LAT_T,
                             lon_ea=EA_LON_T, level=C.PCAP_LEVELS)
 
@@ -297,10 +302,39 @@ def available_items(date: dt.date) -> tuple[list[Item], list[Item]]:
     return [it for it, o in zip(its, ok) if o], [it for it, o in zip(its, ok) if not o]
 
 
+def stale_items(path: Path) -> list[Item]:
+    """이미 있는 하루 파일에서 지금 정의와 맞지 않는 항목: 새로 더한 변수, 예전에 동아시아만 받은 t2m."""
+    with xr.open_dataset(path) as ds:
+        have = set(ds.data_vars)
+        t2m_ea = "t2m" in ds and "lat_ea" in ds["t2m"].dims
+    return [it for it in items() if it.kind not in ("cap", "u60")
+            and (it.key not in have or (it.key == "t2m" and t2m_ea))]
+
+
+def upgrade_day(date: dt.date, stale: list[Item]) -> None:
+    """예전 하루 파일에 빠진 항목만 새로 읽어 합친다 (전체를 다시 받지 않는다)."""
+    out = day_path(date)
+    new = reduce_day(read_items(date, stale), stale)
+    with xr.open_dataset(out) as old:
+        old = old.load()
+    src = old.attrs.get("source")
+    ds = old.drop_vars([it.key for it in stale if it.key in old])
+    ds = ds.drop_dims([d for d in ("lat_ea", "lon_ea") if d in ds.dims and not any(d in ds[v].dims for v in ds.data_vars)])
+    for it in stale:
+        ds[it.key] = new[it.key].expand_dims(time=ds.time.values)
+    if src:
+        ds.attrs["source"] = src + f"; Google(보완): {','.join(it.key for it in stale)}"
+    atomic_to_netcdf(ds, out)
+
+
 def fetch_day(date: dt.date) -> str:
     out = day_path(date)
     if out.exists():
-        return "skip"
+        stale = stale_items(out)
+        if not stale:
+            return "skip"
+        upgrade_day(date, stale)
+        return "upgraded"
     its = items()
     ds = reduce_day(read_items(date, its), its).expand_dims(time=[np.datetime64(date, "ns")])
     atomic_to_netcdf(ds, out)
@@ -327,7 +361,7 @@ def latest_complete_date(today: dt.date | None = None, max_back: int = 20) -> dt
 def run(end: dt.date, workers: int = 6) -> None:
     start = dt.date.fromisoformat(C.ARCO_FIRST)
     days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
-    todo = [d for d in days if not day_path(d).exists()]
+    todo = [d for d in days if not day_path(d).exists() or stale_items(day_path(d))]
     log.info("ARCO-ERA5 원시 자료: 전체 %d일 중 %d일 받을 예정", len(days), len(todo))
     if not todo:
         return

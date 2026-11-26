@@ -147,6 +147,11 @@ def open_field(name: str) -> xr.DataArray:
     return xr.open_dataarray(C.DATA / "merged" / f"{name}.nc")
 
 
+def ea_crop(da: xr.DataArray) -> xr.DataArray:
+    """동아시아 분석 영역(C.EA_LAT, C.EA_LON)만 자른다. 북반구로 저장한 2 m 기온을 예전 동아시아 지수와 같게 쓰려고 둔다."""
+    return da.sel(lat=slice(*C.EA_LAT), lon=slice(*C.EA_LON))
+
+
 def load_indices() -> pd.DataFrame:
     return pd.read_csv(C.OUT / "indices_daily.csv", index_col=0, parse_dates=True)
 
@@ -192,7 +197,11 @@ def field_clim(name: str) -> xr.DataArray:
     """장의 일별 평년값(1991~2020). 한 번 계산하면 data/clim에 저장해 다시 쓴다."""
     p = C.DATA / "clim" / f"{name}.nc"
     if p.exists():
-        return xr.open_dataarray(p).load()
+        cl = xr.open_dataarray(p).load()
+        with open_field(name) as f:     # 예전 영역(동아시아만 받던 t2m)으로 만든 평년값이면 다시 만든다
+            same = cl.lat.size == f.lat.size and cl.lon.size == f.lon.size
+        if same:
+            return cl
     da = open_field(name).sel(time=slice(f"{C.CLIM[0]}-01-01", f"{C.CLIM[1]}-12-31")).load()
     cl = daily_clim(da).rename(name)
     atomic_to_netcdf(cl.to_dataset(), p)
