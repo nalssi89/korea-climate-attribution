@@ -11,3 +11,4 @@ matplotlib
 cartopy
 koreanize-matplotlib
 requests
+cdsapi
