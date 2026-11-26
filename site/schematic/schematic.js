@@ -510,12 +510,24 @@ renderer.domElement.addEventListener("pointermove", (e) => {
 renderer.domElement.addEventListener("wheel", (e) => { e.preventDefault(); cam.dist = Math.max(1.8, Math.min(9, cam.dist * (1 + Math.sign(e.deltaY) * 0.08))); }, { passive: false });
 $("resetBtn").onclick = () => Object.assign(cam, CAM0);
 
-// 한 층만 보기
-function focus(f) {
-  for (const cb of document.querySelectorAll("[data-l]")) { cb.checked = f === "all" || cb.dataset.l === f; groups[cb.dataset.l].visible = cb.checked; }
-  for (const b of document.querySelectorAll("[data-f]")) b.setAttribute("aria-pressed", b.dataset.f === f);
-  if (f === "strat") Object.assign(cam, { el: 70 * D2R }); else if (f !== "all") Object.assign(cam, { el: 55 * D2R });
+// 보일 층 고르기: 전체가 켜진 상태에서 층을 누르면 그 층만 남기고, 그 뒤로는 누를 때마다 더하거나 뺀다(여러 개 가능).
+// '전체'는 모두 켠다.
+const layerBtns = () => [...document.querySelectorAll("[data-l]")];
+function showLayers() {
+  let all = true;
+  for (const b of layerBtns()) { const on = b.getAttribute("aria-pressed") === "true"; groups[b.dataset.l].visible = on; all &&= on; }
+  $("allBtn").setAttribute("aria-pressed", all);
 }
+function toggleLayer(b) {
+  if ($("allBtn").getAttribute("aria-pressed") === "true") {
+    for (const x of layerBtns()) x.setAttribute("aria-pressed", x === b);
+    return showLayers();
+  }
+  const on = b.getAttribute("aria-pressed") !== "true";
+  if (!on && layerBtns().filter((x) => x.getAttribute("aria-pressed") === "true").length === 1) return;   // 하나는 남긴다
+  b.setAttribute("aria-pressed", on); showLayers();
+}
+function showAll() { for (const b of layerBtns()) b.setAttribute("aria-pressed", true); showLayers(); }
 
 const proj = new THREE.Vector3();
 function loop(ts) {
@@ -565,8 +577,8 @@ function loop(ts) {
   $("lastBtn").onclick = () => { setPlay(false); T = range[1]; draw(); };
   const jump = (s) => { T = Math.max(0, Math.min(D.n - 1, T + s * +$("jumpSel").value)); draw(); };
   $("backBtn").onclick = () => jump(-1); $("fwdBtn").onclick = () => jump(1);
-  for (const cb of document.querySelectorAll("[data-l]")) cb.onchange = () => { groups[cb.dataset.l].visible = cb.checked; };
-  for (const b of document.querySelectorAll("[data-f]")) b.onclick = () => focus(b.dataset.f);
+  for (const b of layerBtns()) b.onclick = () => toggleLayer(b);
+  $("allBtn").onclick = showAll;
   $("gapSel").onchange = (e) => { gap = +e.target.value; setR(); draw(); };
   const sel = $("sfcSel");
   sel.innerHTML = Object.entries(SFC_VARS).map(([k, s]) => `<option value="${k}"${sfcOK(k) || k === "t" ? "" : " disabled"}>지상: ${s.name.split(" (")[0]}${sfcOK(k) || k === "t" ? "" : " (자료 준비 중)"}</option>`).join("");
