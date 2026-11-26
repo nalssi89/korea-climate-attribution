@@ -28,7 +28,7 @@
   },
   "최근 날짜 혼합 채움": [
     "2026-11-19: 이미 있음 (Google: z250,u200,u250,u300,v250,v850,t850,q850,v100,t100,z10,t10,cap30,cap50,cap200,cap300,cap700,cap1000,u1060,msl,t2m,tp,sst,ci; ECMWF ARCO: z500,u850,cap100,cap150,cap850)",
-    "2026-11-20: 이미 있음 (Google: z500,z250,u200,u250,u850,v250,t850,q850,t100,z10,cap30,cap100,cap150,cap200,cap300,cap700,cap850,cap1000,u1060,msl,t2m,tp,sst,ci; ECMWF ARCO: u300,v850,v100,cap50; CDS API: t10)"
+    "2026-11-20: ECMWF ARCO ['u300', 'v850', 'v100', 'cap50'], CDS API ['t10']"
   ],
   "ECMWF ARCO 교차 검증": {
     "date": "2026-11-18",
