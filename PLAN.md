@@ -116,7 +116,9 @@ ERA5와 KMA 관측으로 최근 한 달 북반구 전체의 기후인자를 찾�
   - 2026년 11월 SSW 전용 구역: 10 hPa 바람, 극관 고도 연직-시간 단면, 과거 이른 겨울 사례와의 비교
   - 자료 기준일, 방법, 한계
 - 밝은/어두운 테마와 휴대폰 폭에서 깨지지 않게 한다. 외부 스크립트는 cdnjs의 고정 버전만 쓴다.
-- **공개 방식은 사용자 결정 사항이다.** 사용자 확인 없이 GitHub Pages를 켜거나 저장소를 공개로 바꾸지 않는다(비공개 저장소의 Pages도 사이트는 누구나 볼 수 있다). 확인 전까지는 `site/`를 커밋하고, 로컬에서 여는 방법을 README에 적는다.
+- **공개 방식(사용자 결정, 2026-11-26)**: 저장소는 공개이고 GitHub Pages로 배포한다. 주소는 https://nalssi89.github.io/korea-climate-attribution/ 이다. `main`의 `site/`가 바뀌면 `.github/workflows/pages.yml`이 자동 배포한다. `site/index.html`이 없을 때는 워크플로가 "준비 중" 임시 페이지를 올린다.
+- 저장소와 사이트가 모두 공개이므로 API 키, 개인 정보, 재배포가 제한된 원자료를 커밋하지 않는다. KMA 관측은 원자료 대신 집계값(영역 평균, 편차)만 `site/data/`에 넣는다. ERA5(Copernicus)와 KMA 자료의 출처를 대시보드에 표기한다.
+- 모든 경로는 상대 경로로 쓴다(사이트가 `/korea-climate-attribution/` 아래에서 열린다).
 - 파이프라인은 `python -m src.run --end YYYY-MM-DD` 한 번으로 `site/data/`까지 갱신한다. 정기 자동 갱신은 후속 작업으로 둔다.
 
 ## 7단계: three.js 동적 모식도 (`site/schematic/`)

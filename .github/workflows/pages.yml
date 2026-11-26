@@ -1,0 +1,37 @@
+name: Deploy dashboard to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fallback page while the dashboard is not built yet
+        run: |
+          mkdir -p site
+          if [ ! -f site/index.html ]; then
+            printf '%s\n' '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>대시보드 준비 중</title><body style="font-family:sans-serif;max-width:40em;margin:4em auto;padding:0 16px"><h1>대시보드 준비 중</h1><p>분석 파이프라인이 끝나면 이 주소에 대시보드가 올라옵니다.</p></body></html>' > site/index.html
+          fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
