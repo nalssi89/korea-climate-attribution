@@ -77,7 +77,8 @@ def forcing_section(F: dict) -> list[str]:
     H.append(_table(["지수", "분류", "장", "영역 (남·북·서·동)", "격자", "근거"],
                     [[sp["label"], sp["group"], sp["field"] + (" (월평균, CDS)" if sp.get("monthly") else " (일별)"),
                       " · ".join(f"{v:g}" for v in sp["region"]),
-                      {"sea": "바다", "land": f"육지 비율 ≥ {C.LAND_MIN:g}"}.get(sp["surface"], "-"), sp["ref"]]
+                      {"sea": "바다", "land": f"육지 비율 ≥ {C.LAND_MIN:g}"}.get(sp["surface"], "-"),
+                      f"<div style='white-space:normal;min-width:240px;text-align:left'>{sp['ref']}</div>"]
                      for sp in F["forcings"].values()]))
     sub = F.get("substitute")
     H.append("<ul>"
@@ -94,18 +95,22 @@ def forcing_section(F: dict) -> list[str]:
                "동결 시점의 차이를 함께 담는다.</li></ul>")
     # 현재 상태
     H.append("<h3>현재 상태</h3>")
+    from ..forcing import _word
     rows = []
     for k, row in F["current"].items():
         sp = F["forcings"][k]
-        unit = sp["unit"]
-        for per, st in row.items():
-            lab = PER_LABEL.get(per, st.get("label", per))
-            nd = 2 if unit in ("σ", "°C") else 1
-            rows.append([sp["label"], f"{lab} ({st.get('start', st.get('month', ''))}~{st.get('end', '')})".replace("~)", ")"),
-                         f"{_s(st['value'], nd)} {'' if unit == 'σ' else unit}", f"{st['sigma']:+.1f}σ" if st["sigma"] is not None else "–",
-                         f"{st['percentile']:.0f}" if st["percentile"] is not None else "–", f"{st['n_years']}개 해 중 {st['rank_high']}위",
-                         N.sigma_word(st["sigma"])])
-    H.append(_table(["지수", "기간", "편차", "σ", "백분위", "높은 순", "판정"], rows))
+        unit = "" if sp["unit"] == "σ" else " " + sp["unit"]
+        nd = 2 if sp["unit"] in ("σ", "°C") else 1
+        cell = lambda st: "–" if not st else f"{_s(st['value'], nd)}{unit} ({st['sigma']:+.1f}σ)"
+        main = row.get("last30") or row.get("latest_month")
+        if "latest_month" in row:
+            c = ["–", f"{cell(main)}<br><span class='sub'>{main['month']} 월평균</span>", "–", "–"]
+        else:
+            c = [cell(row.get(p)) for p in ("last7", "last30", "month", "pentad")]
+        rows.append([sp["label"]] + c + [f"{main['percentile']:.0f}", f"{main['n_years']}개 해 중 {main['rank_high']}위", _word(k, main["sigma"])])
+    H.append(_table(["지수", "최근 7일", "최근 30일", "이번 달(진행 중)", "이번 반순(진행 중)", "백분위", "높은 순", "판정"], rows))
+    H.append(f"<p class='sub'>값은 편차, 괄호는 평년(1991~2020) 같은 날짜 구간 기준 표준화 편차. 백분위·순위·판정은 최근 30일(지면온도는 최근 월) 기준, "
+             f"{C.START_YEAR}년 이후 같은 날짜 구간과 비교. 자료 끝 {F['end']}.</p>")
     H.append("<ul>" + "".join(f"<li>{x}</li>" for x in F["sentences"]["state"]) + "</ul>")
     H.append(_img("fig15_forcing_maps.png", "그림 15. 최근 30일 강제인자 편차장(지면온도는 최근 월평균). 점선 상자는 지수 영역."))
     # 시차 상관
