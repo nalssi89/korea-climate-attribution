@@ -1,4 +1,4 @@
-"""한반도 목표 변수: ERA5 육지 가중 평균 기온·강수 편차, (있으면) ASOS 전국 평균."""
+"""한반도 목표 변수: ERA5 육지 가중 평균 기온·강수 편차, (있으면) ASOS 전국 평균(기상청 공식 62개 지점)."""
 from __future__ import annotations
 
 import pandas as pd
@@ -22,9 +22,13 @@ def compute(t2m: xr.DataArray, tp: xr.DataArray) -> pd.DataFrame:
     except Exception:
         obs = None
     if obs is not None and len(obs) > 3650:
-        obs = obs.reindex(out.index)
-        out["asos_t"] = series_anom(obs["ta"])
-        out["asos_p"] = series_anom(obs["rn"])
+        # 기상청 방식: 실황은 대표 62개 지점, 평년은 통합 지점(860·864)을 쓴 62개 지점
+        obs = obs.reindex(pd.date_range(min(obs.index.min(), out.index.min()), max(obs.index.max(), out.index.max())))
+        t_clim, p_clim = series_clim(obs["ta_norm"]), series_clim(obs["rn_norm"])
+        obs = obs.assign(t_clim=t_clim, p_clim=p_clim).reindex(out.index)
+        out["asos_t_raw"], out["asos_p_raw"] = obs["ta"], obs["rn"]
+        out["asos_t"] = obs["ta"] - obs["t_clim"]
+        out["asos_p"] = obs["rn"] - obs["p_clim"]
     return out
 
 

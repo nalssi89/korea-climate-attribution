@@ -16,6 +16,7 @@ import pandas as pd
 import xarray as xr
 
 from .. import config as C
+from .. import kma_official as K
 from .. import narrative as N
 from ..common import anomaly, field_clim, get_logger, open_field
 from ..periods import Period, same_dates_other_years, standing
@@ -201,6 +202,18 @@ def precip_ratio(df: pd.DataFrame, reg: str, start, eff_end) -> float:
     return float(w[raw].sum() / w[clim].sum() * 100)
 
 
+def official_month(df: pd.DataFrame, p: Period, info: dict) -> dict | None:
+    """끝난 달력 월이면 ASOS 전국 62개 지점 월값을 기상청 공식 평년비슷범위로 판정한다 (kmahub와 같은 기준)."""
+    if p.kind != "month" or not info["complete"] or "asos_t_raw" not in df:
+        return None
+    w = df[str(p.start):str(p.end)]
+    if w["asos_t_raw"].isna().any() or w["asos_p_raw"].isna().any():
+        return None
+    m = p.start.month
+    return dict(tavg=K.classify_tavg(m, float(w["asos_t_raw"].mean())),
+                precip=K.classify_precip(m, float(w["asos_p_raw"].sum())))
+
+
 def analyze_period(eng: Engine, p: Period, data_end: dt.date, rng, grid: bool = True) -> dict:
     df = eng.df
     start, eff_end = pd.Timestamp(p.start), pd.Timestamp(p.eff_end(data_end))
@@ -232,9 +245,16 @@ def analyze_period(eng: Engine, p: Period, data_end: dt.date, rng, grid: bool = 
         sent.append(f"관측 검증: ASOS 전국 평균 기온 편차 {N.num(a['value'], 2, '°C')}({N.num(a['sigma'], 1, 'σ')}), "
                     f"ERA5 한반도 {N.num(e['value'], 2, '°C')}({N.num(e['sigma'], 1, 'σ')})."
                     + (" 두 자료의 판정 등급이 다르다." if N.temp_word(a["sigma"]) != N.temp_word(e["sigma"]) else ""))
+    kma = official_month(df, p, info)
+    if kma:
+        t, r = kma["tavg"], kma["precip"]
+        sent.append(f"기상청 공식 판정(전국 62개 지점, 1991~2020 평년비슷범위): 평균기온 {t['observed']:.1f}°C, "
+                    f"평년 대비 {t['departure']:+.1f}°C({t['sign']}, 비슷범위 ±{t['half_range']:.1f}) → {t['word']}; "
+                    f"강수량 {r['observed']:.1f} mm, 평년비 {r['ratio']:.0f}%({r['sign']}, 비슷범위 "
+                    f"{r['lower']:.1f}~{r['upper']:.1f} mm) → {r['word']}.")
     if not info["complete"]:
         sent.insert(0, f"진행 중인 기간이다: {info['full_days']}일 중 {info['n_days']}일({info['eff_end']}까지)만 포함했다.")
-    return dict(period=info, indices=st_idx, regions=regions, attribution=att, sentences=sent,
+    return dict(period=info, indices=st_idx, regions=regions, attribution=att, sentences=sent, kma_official=kma,
                 blocked_days=int(df.blocked[start:eff_end].sum()))
 
 
