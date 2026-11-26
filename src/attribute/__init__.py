@@ -230,13 +230,30 @@ def run_cases(df: pd.DataFrame, end: pd.Timestamp) -> list[dict]:
     return out
 
 
+def run_periods(df: pd.DataFrame, end, rng) -> tuple[list[dict], list[dict]]:
+    """반순·주·월·최근 7일·최근 30일 단위 진단과 기여도 (PLAN의 '분석 기간 단위')."""
+    from .. import periods as P
+    from . import periods as AP
+    eng = AP.Engine(df)
+    res = [AP.analyze_period(eng, p, end.date(), rng) for p in P.recent_periods(end.date())]
+    r2 = AP.r2_by_kind(res)
+    light = [{k: v for k, v in r.items() if k != "attribution"} | {"attribution": {
+        k: v for k, v in r["attribution"].items() if k != "maps"}} for r in res]
+    (C.OUT / "periods_summary.json").write_text(json.dumps(dict(end=str(end.date()), r2_by_kind=r2, periods=light),
+                                                         ensure_ascii=False, indent=1, default=float))
+    log.info("기간 단위 분석 %d개: %s", len(res), ", ".join(f"{r['kind_label']} R²cv(한반도 기온) {r['r2cv_korea_t']:.2f}" for r in r2))
+    return res, r2
+
+
 def run(end) -> dict:
     end = pd.Timestamp(end)
     df = load_indices()
     rng = np.random.default_rng(C.SEED)
     out = dict(end=str(end.date()), composites=run_composites(df, rng), regression=run_regression(df, end, rng),
                cases=run_cases(df, end))
-    (C.OUT / "attribution.json").write_text(json.dumps(out, ensure_ascii=False, indent=2, default=float))
+    out["periods"], out["r2_by_kind"] = run_periods(df, end, rng)
+    (C.OUT / "attribution.json").write_text(json.dumps({k: v for k, v in out.items() if k != "periods"},
+                                                       ensure_ascii=False, indent=2, default=float))
     r = out["regression"]["korea_t"]
     log.info("기여도 완료: 관측 %+.2f°C = 설명 %+.2f + 잔차 %+.2f (교차검증 R² %.2f)", r["observed"], r["predicted"],
              r["residual"], r["r2_cv"])

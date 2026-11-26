@@ -20,7 +20,11 @@ INDEX_LABEL = {
     "siberian_high": ("시베리아 고기압 편차", "hPa"), "ea_jet": ("동아시아 제트 편차", "m/s"),
     "eawm": ("겨울몬순 지수 편차", "m/s"), "phil_sea": ("필리핀해 해면기압 편차", "hPa"),
     "bk_ice": ("바렌츠-카라 해빙 편차", "비율"), "pch10": ("극관 고도 10 hPa", "σ"),
-    "pch500": ("극관 고도 500 hPa", "σ"),
+    "pch500": ("극관 고도 500 hPa", "σ"), "pch100": ("극관 고도 100 hPa", "σ"),
+    "u1060": ("10 hPa 60°N 동서풍", "m/s"), "t10_cap_anom": ("극관 10 hPa 기온 편차", "K"),
+    "vt100_anom": ("100 hPa 에디 열속 편차", "K·m/s"), "aleutian": ("알류샨 해면기압 편차", "hPa"),
+    "blocked": ("우랄 블로킹일", "일"), "nao": ("북대서양진동(NAO)", "σ"), "pna": ("태평양-북미(PNA)", "σ"),
+    "wp": ("서태평양(WP)", "σ"), "eu": ("유라시아(EU)", "σ"), "scand": ("스칸디나비아(SCAND)", "σ"),
 }
 
 
@@ -44,8 +48,8 @@ def plot_maps(start, end) -> dict:
     spec = [("z500", "500 hPa 고도 편차 (m)", "polar", (10, 20, 30, 40, 60, 80)),
             ("msl", "해면기압 편차 (hPa)", "polar", (1, 1.5, 2, 3, 4, 6)),
             ("z10", "10 hPa 고도 편차 (m)", "polar", (25, 50, 75, 100, 150, 200)),
-            ("t850", "850 hPa 기온 편차 (°C)", "eurasia", (0.5, 1, 1.5, 2, 3)),
-            ("u200", "200 hPa 동서풍 편차 (m/s)", "eurasia", (1, 2, 3, 4, 6)),
+            ("t850", "850 hPa 기온 편차 (°C)", "polar", (0.5, 1, 1.5, 2, 3)),
+            ("u250", "250 hPa 동서풍 편차 (m/s)", "polar", (1, 2, 3, 4, 6)),
             ("sst", "해수면온도 편차 (°C)", "pacific", (0.25, 0.5, 0.75, 1))]
     fig = plt.figure(figsize=(15, 9.5))
     stats = {}
@@ -78,11 +82,39 @@ def plot_maps(start, end) -> dict:
         ax.set_title(title, fontsize=11, loc="left")
         fig.colorbar(cf, ax=ax, orientation="horizontal", pad=0.04, shrink=0.85, aspect=35)
         stats[name] = dict(min=float(da.min()), max=float(da.max()))
-    fig.suptitle(f"편차장 ({start} ~ {end} 평균, 평년 {C.CLIM[0]}~{C.CLIM[1]}) · ★ 한반도, 상자: 우랄 영역·Niño3.4",
+    fig.suptitle(f"북반구 편차장 ({start} ~ {end} 평균, 평년 {C.CLIM[0]}~{C.CLIM[1]}) · ★ 한반도, 상자: 우랄 영역·Niño3.4",
                  fontsize=12, x=0.01, ha="left")
     fig.tight_layout()
     savefig(fig, "fig01_anomaly_maps.png")
     return stats
+
+
+def plot_ea_maps(start, end) -> dict:
+    """동아시아(20~55°N, 100~150°E) 기온·강수 편차와 하위 영역 평균."""
+    plt = setup_plot()
+    import cartopy.crs as ccrs
+    pc = ccrs.PlateCarree()
+    fig = plt.figure(figsize=(12, 5.4))
+    out = {}
+    for i, (name, title, steps, cmap) in enumerate((("t2m", "2 m 기온 편차 (°C)", (0.5, 1, 1.5, 2, 3), diverging_cmap()),
+                                                    ("tp", "강수 편차 (mm/일)", (0.25, 0.5, 1, 1.5, 2), diverging_cmap().reversed()))):
+        da = window_anom(name, start, end).sel(lat=slice(C.EA_BOX[0], C.EA_BOX[1]), lon=slice(C.EA_BOX[2], C.EA_BOX[3]))
+        ax = fig.add_subplot(1, 2, i + 1, projection=pc)
+        ax.set_extent([C.EA_BOX[2], C.EA_BOX[3], C.EA_BOX[0], C.EA_BOX[1]], pc)
+        cf = ax.contourf(da.lon, da.lat, da.values, levels=_levels(da, steps), cmap=cmap, extend="both", transform=pc)
+        ax.coastlines(linewidth=0.6, color="#474747")
+        for key, (label, (s, n, w, e)) in C.EA_SUBREGIONS.items():
+            if key == "ea":
+                continue
+            ax.plot([w, e, e, w, w], [s, s, n, n, s], color=INK2, lw=1, transform=pc)
+        ax.set_title(title, fontsize=11, loc="left")
+        fig.colorbar(cf, ax=ax, orientation="horizontal", pad=0.06, shrink=0.85, aspect=35)
+        out[name] = dict(min=float(da.min()), max=float(da.max()))
+    fig.suptitle(f"동아시아 기온·강수 편차 ({start} ~ {end}) · 상자: 하위 영역(한반도, 중국 북부·남부, 일본, 몽골·시베리아 남부)",
+                 fontsize=11, x=0.01, ha="left")
+    fig.tight_layout()
+    savefig(fig, "fig14_east_asia_maps.png")
+    return out
 
 
 def plot_daily(df: pd.DataFrame, start, end, back: int = 90) -> None:
@@ -233,6 +265,7 @@ def run(start, end) -> dict:
     df = load_indices()
     out = summarize(df, start, end)
     out["map_range"] = plot_maps(start, end)
+    out["ea_map_range"] = plot_ea_maps(start, end)
     plot_daily(df, start, end)
     plot_waf(start, end)
     out["korea_low_level"] = plot_low_level(start, end)

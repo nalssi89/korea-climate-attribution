@@ -1,0 +1,238 @@
+"""6·7단계: 정적 대시보드(site/)와 three.js 모식도(site/schematic/)가 읽는 축약 JSON을 내보낸다.
+
+- 격자는 정수로 양자화해 {"lat0","dlat","nlat","lon0","dlon","nlon","scale","offset","v"} 꼴로 담는다
+  (실제 값 = v * scale + offset, 결측은 null).
+- KMA 관측은 원자료를 넣지 않고 전국 평균 편차 같은 집계값만 넣는다 (공개 저장소).
+- 사이트의 모든 경로는 상대 경로라 /korea-climate-attribution/ 아래에서도 열린다.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import json
+import shutil
+
+import numpy as np
+import pandas as pd
+import xarray as xr
+
+from . import config as C
+from .common import anomaly, field_clim, get_logger, open_field, series_clim, window_anom
+
+log = get_logger("export")
+SITE = C.ROOT / "site"
+DATA = SITE / "data"
+
+# 대시보드 지도에 쓰는 장: 이름 -> (한국어 이름, 단위, 양자화 간격)
+NH_FIELDS = {"z500": ("500 hPa 고도", "m", 1.0), "msl": ("해면기압", "hPa", 0.1), "t850": ("850 hPa 기온", "°C", 0.1),
+             "u250": ("250 hPa 동서풍", "m/s", 0.1), "z10": ("10 hPa 고도", "m", 1.0), "t10": ("10 hPa 기온", "°C", 0.1)}
+DAILY_KEYS = ["u1060", "pv", "t10_cap_anom", "vt100_anom", "wave1", "wave2", "vortex_lat", "vortex_lon", "vortex_pieces",
+              "pch10", "pch100", "pch500", "ural", "blocked", "aleutian", "nino34", "ao", "nao", "pna", "wp", "eu", "scand",
+              "siberian_high", "ea_jet", "eawm", "phil_sea", "bk_ice", "korea_t", "korea_p", "ea_t", "ea_p", "nchina_t",
+              "schina_t", "japan_t", "mongolia_t", "asos_t", "asos_p"]
+
+
+def _q(a: np.ndarray, scale: float, offset: float = 0.0) -> list:
+    v = np.round((np.asarray(a, dtype="float64") - offset) / scale)
+    return [None if not np.isfinite(x) else int(x) for x in v.ravel()]
+
+
+def grid(da, lat, lon, scale: float, offset: float = 0.0) -> dict:
+    lat, lon = np.asarray(lat, float), np.asarray(lon, float)
+    return dict(lat0=round(float(lat[0]), 3), dlat=round(float(lat[1] - lat[0]), 3), nlat=int(lat.size),
+                lon0=round(float(lon[0]), 3), dlon=round(float(lon[1] - lon[0]), 3), nlon=int(lon.size),
+                scale=scale, offset=offset, v=_q(np.asarray(da), scale, offset))
+
+
+def _r(x, nd=3):
+    """JSON에 넣을 숫자를 줄인다 (중첩 구조 전체)."""
+    if isinstance(x, dict):
+        return {k: _r(v, nd) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_r(v, nd) for v in x]
+    if isinstance(x, (np.floating, float)):
+        return None if not np.isfinite(x) else round(float(x), nd)
+    if isinstance(x, np.integer):
+        return int(x)
+    if isinstance(x, np.bool_):
+        return bool(x)
+    return x
+
+
+def _dump(obj, path) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    s = json.dumps(_r(obj), ensure_ascii=False, separators=(",", ":"))
+    path.write_text(s)
+    return len(s)
+
+
+# ------------------------------------------------------------------ 기간별 파일
+def period_file(res: dict) -> dict:
+    p = res["period"]
+    start, end = p["start"], p["eff_end"]
+    nh = {}
+    for name, (label, unit, sc) in NH_FIELDS.items():
+        da = window_anom(name, start, end).isel(lat=slice(None, None, 2), lon=slice(None, None, 2))
+        nh[name] = dict(label=label, unit=unit, **grid(da.values, da.lat, da.lon, sc))
+    from .diagnose import dynamics
+    w = dynamics.tn_flux(start, end)
+    ws = w.isel(lat=slice(None, None, 4), lon=slice(None, None, 4))
+    waf = dict(fx=grid(ws.fx.values, ws.lat, ws.lon, 0.1), fy=grid(ws.fy.values, ws.lat, ws.lon, 0.1))
+    za = w.za.isel(lat=slice(None, None, 2), lon=slice(None, None, 2))
+    nh["waf"] = dict(label="250 hPa 파동활동 플럭스와 고도 편차", unit="m", **grid(za.values, za.lat, za.lon, 1.0), arrows=waf)
+    ea = {}
+    for name, m in res["attribution"]["maps"].items():
+        sc = 0.05
+        ea[name] = dict(obs=grid(m["obs"], m["lat"], m["lon"], sc), resid=grid(m["resid"], m["lat"], m["lon"], sc),
+                        r2cv=grid(m["r2cv"], m["lat"], m["lon"], 0.01),
+                        contrib={f: grid(v, m["lat"], m["lon"], 0.01) for f, v in m["contrib"].items()})
+    att = {k: v for k, v in res["attribution"].items() if k != "maps"}
+    return dict(period=p, indices=res["indices"], regions=res["regions"], attribution=att,
+                sentences=res["sentences"], blocked_days=res["blocked_days"], nh=nh, ea=ea)
+
+
+# ------------------------------------------------------------------ 일별 지수, 사건
+def indices_file(df: pd.DataFrame, end: pd.Timestamp, back: int = 150) -> dict:
+    t0 = end - pd.Timedelta(days=back - 1)
+    d = df[t0:end]
+    ser = {k: d[k].tolist() for k in DAILY_KEYS if k in d}
+    ser["u1060_clim"] = series_clim(df["u1060"])[t0:end].tolist()
+    ub = pd.read_csv(C.OUT / "events_ural_blocking.csv")
+    ub = ub[pd.to_datetime(ub.end) >= t0]
+    try:
+        ssw = pd.read_csv(C.OUT / "events_ssw.csv")
+    except pd.errors.EmptyDataError:
+        ssw = pd.DataFrame(columns=["date"])
+    oni = pd.read_csv(C.OUT / "oni_monthly.csv", index_col=0, parse_dates=True)["oni"].dropna()
+    enso = [dict(month=f"{t:%Y-%m}", oni=float(v), phase="엘니뇨" if v >= C.ONI_THRESHOLD else
+                 ("라니냐" if v <= -C.ONI_THRESHOLD else "중립")) for t, v in oni[-6:].items()]
+    return dict(start=str(t0.date()), end=str(end.date()), series=ser,
+                events=dict(ural_blocking=json.loads(ub.to_json(orient="records", force_ascii=False)),
+                            ssw=json.loads(ssw.to_json(orient="records", force_ascii=False, date_format="iso"))),
+                enso=enso)
+
+
+def ssw_file(case: dict, end: pd.Timestamp, back: int = 120) -> dict:
+    pch = xr.open_dataarray(C.DATA / "derived" / "pch.nc")
+    t0 = end - pd.Timedelta(days=back - 1)
+    p = pch.sel(time=slice(t0, end))
+    return dict(case=case, pch=dict(start=str(t0.date()), levels=[int(l) for l in p.level.values],
+                                    v=_q(p.values.T, 0.01)))
+
+
+# ------------------------------------------------------------------ 모식도용 일별 축약 자료
+def schematic_file(df: pd.DataFrame, end: pd.Timestamp, case: dict, days: int = 90) -> dict:
+    from .diagnose import dynamics
+    t0 = end - pd.Timedelta(days=days - 1)
+    times = pd.date_range(t0, end)
+    sl = dict(lat=slice(18, 90))
+    out = dict(start=str(t0.date()), end=str(end.date()), n=len(times), fields={})
+
+    def daily(name, anom=True):
+        da = open_field(name).sel(time=slice(t0, end)).load()
+        if anom:
+            da = anomaly(da, field_clim(name))
+        return da
+
+    z10 = daily("z10", anom=False).sel(**sl).isel(lat=slice(None, None, 3), lon=slice(None, None, 3))
+    # 극소용돌이 가장자리: 그날의 평년 60°N 동서평균 10 hPa 고도 (indices.strat.vortex_geometry와 같은 정의)
+    edge = series_clim(open_field("z10").sel(lat=60.0).mean("lon").to_series())[t0:end]
+    out["fields"]["z10"] = dict(unit="m", **grid(z10.values, z10.lat, z10.lon, 10.0, 30000.0))
+    out["z10_edge"] = edge.round(0).tolist()
+    for name, sc in (("z500", 5.0), ("msl", 0.5)):
+        da = daily(name).sel(**sl).isel(lat=slice(None, None, 3), lon=slice(None, None, 3))
+        out["fields"][f"{name}_anom"] = dict(unit="m" if name == "z500" else "hPa", **grid(da.values, da.lat, da.lon, sc))
+    u = daily("u250", anom=False).sel(**sl).isel(lat=slice(None, None, 3), lon=slice(None, None, 3))
+    out["fields"]["u250"] = dict(unit="m/s", **grid(u.values, u.lat, u.lon, 1.0))
+    t2 = daily("t2m").isel(lat=slice(None, None, 2), lon=slice(None, None, 2))
+    out["fields"]["t2m_anom"] = dict(unit="°C", **grid(t2.values, t2.lat, t2.lon, 0.5))
+    sst = open_field("sst").sel(time=slice(t0, end)).load()
+    sst = anomaly(sst, field_clim("sst")).sel(lat=slice(-15, 15), lon=slice(120, 285))
+    sst = sst.isel(lat=slice(None, None, 3), lon=slice(None, None, 3))
+    out["fields"]["sst_anom"] = dict(unit="°C", **grid(sst.values, sst.lat, sst.lon, 0.1))
+    # 파동활동 플럭스: 날마다 앞뒤 3일(7일) 평균 편차로 계산
+    fx, fy = [], []
+    for t in times:
+        a, b = t - pd.Timedelta(days=3), min(t + pd.Timedelta(days=3), end)
+        w = dynamics.tn_flux(a.date(), b.date()).sel(lat=slice(27, 81)).isel(lat=slice(None, None, 6), lon=slice(None, None, 6))
+        fx.append(w.fx.values)
+        fy.append(w.fy.values)
+    out["fields"]["waf_fx"] = dict(unit="m²/s²", **grid(np.stack(fx), w.lat, w.lon, 0.5))
+    out["fields"]["waf_fy"] = dict(unit="m²/s²", **grid(np.stack(fy), w.lat, w.lon, 0.5))
+    pch = xr.open_dataarray(C.DATA / "derived" / "pch.nc").sel(time=slice(t0, end))
+    out["pch"] = dict(levels=[int(l) for l in pch.level.values], v=_q(pch.values, 0.1))
+    d = df.reindex(times)
+    out["series"] = {k: d[k].tolist() for k in ("u1060", "ural", "blocked", "ao", "nino34", "t10_cap_anom", "korea_t",
+                                                "ea_t", "vortex_lat", "vortex_lon", "vortex_pieces", "siberian_high",
+                                                "aleutian", "vt100_anom") if k in d}
+    ub = pd.read_csv(C.OUT / "events_ural_blocking.csv")
+    ub = ub[(pd.to_datetime(ub.end) >= t0)]
+    marks = [dict(date=str(r.onset), kind="ural", label=f"우랄블로킹 시작 ({r.duration}일)") for r in ub.itertuples()
+             if pd.Timestamp(r.onset) >= t0]
+    if case.get("onset"):
+        marks.append(dict(date=case["onset"], kind="ssw",
+                          label="SSW 발생(주 승온)" if case["kind"] == "major" else "성층권 승온(부 승온)"))
+    out["marks"] = sorted(marks, key=lambda m: m["date"])
+    return out
+
+
+def coastlines() -> dict:
+    """Natural Earth 해안선(공개 자료). 지구본·북반구 지도는 110m, 동아시아 확대 지도는 50m."""
+    import cartopy.io.shapereader as shp
+    out = {}
+    for res, box in (("110m", (-35, 90, -180, 180)), ("50m", (10, 62, 85, 165))):
+        lines = []
+        for geom in shp.Reader(shp.natural_earth(resolution=res, category="physical", name="coastline")).geometries():
+            parts = getattr(geom, "geoms", [geom])
+            for g in parts:
+                xy = np.asarray(g.coords)
+                keep = (xy[:, 1] >= box[0]) & (xy[:, 1] <= box[1]) & (xy[:, 0] >= box[2]) & (xy[:, 0] <= box[3])
+                if keep.sum() < 2:
+                    continue
+                # 영역 밖으로 나간 구간에서 선을 끊는다
+                seg = []
+                for (x, y), k in zip(xy, keep):
+                    if k:
+                        seg += [round(float(x), 2), round(float(y), 2)]
+                    elif len(seg) >= 4:
+                        lines.append(seg)
+                        seg = []
+                    else:
+                        seg = []
+                if len(seg) >= 4:
+                    lines.append(seg)
+        out[res] = lines
+    return out
+
+
+def run(end, periods_res: list[dict], r2_rows: list[dict], case: dict, df: pd.DataFrame) -> None:
+    end = pd.Timestamp(end)
+    if (DATA / "periods").exists():
+        shutil.rmtree(DATA / "periods")
+    sizes = {}
+    plist = []
+    for res in periods_res:
+        pid = res["period"]["pid"]
+        sizes[pid] = _dump(period_file(res), DATA / "periods" / f"{pid}.json")
+        plist.append({k: res["period"][k] for k in ("pid", "kind", "kind_label", "label", "start", "end", "eff_end",
+                                                   "n_days", "full_days", "complete")})
+    status = json.loads((C.OUT / "fetch_status.json").read_text()) if (C.OUT / "fetch_status.json").exists() else {}
+    tele = json.loads((C.OUT / "teleconnection_modes.json").read_text()) if (C.OUT / "teleconnection_modes.json").exists() else {}
+    from .attribute.regression import FACTOR_LABEL
+    from .diagnose import INDEX_LABEL
+    meta = dict(generated=dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), data_end=str(end.date()),
+                clim=list(C.CLIM), start_year=C.START_YEAR, periods=plist, r2_by_kind=r2_rows,
+                regions=[dict(key=k, name=v[0], box=list(v[1])) for k, v in C.EA_SUBREGIONS.items()],
+                factors=[dict(key=k, label=FACTOR_LABEL[k], lag=C.DRIVERS[k]) for k in C.DRIVERS],
+                index_label={k: list(v) for k, v in INDEX_LABEL.items()}, tele_label=C.TELE_LABEL, tele=tele,
+                fields={k: dict(label=v[0], unit=v[1]) for k, v in NH_FIELDS.items()},
+                status={k: v for k, v in status.items()},
+                rules=dict(sigma_strong=C.SIGMA_STRONG, sigma_weak=C.SIGMA_WEAK))
+    sizes["meta"] = _dump(meta, DATA / "meta.json")
+    sizes["indices"] = _dump(indices_file(df, end), DATA / "indices.json")
+    sizes["ssw"] = _dump(ssw_file(case, end), DATA / "ssw.json")
+    sizes["schematic"] = _dump(schematic_file(df, end, case), DATA / "schematic.json")
+    coast = DATA / "coast.json"
+    if not coast.exists():
+        sizes["coast"] = _dump(coastlines(), coast)
+    tot = sum(sizes.values())
+    log.info("site/data 갱신: %d개 파일, %.1f MB (가장 큰 것 %s)", len(sizes), tot / 1e6, max(sizes, key=sizes.get))

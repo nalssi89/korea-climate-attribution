@@ -41,3 +41,8 @@ def compute(msl: xr.DataArray, u200: xr.DataArray, u300: xr.DataArray, ci: xr.Da
     out["eawm"] = series_anom(eawm.to_series())
     out["bk_ice"] = series_anom(area_mean(ci, R["bk_ice"]).to_series())
     return out
+
+
+def aleutian(msl: xr.DataArray) -> pd.Series:
+    """알류샨 저기압 세기: 40~60°N, 160°E~140°W 해면기압 편차 (음이면 저기압이 깊음)."""
+    return series_anom(area_mean(msl, C.ALEUTIAN).to_series()).rename("aleutian")

@@ -9,6 +9,7 @@ import pandas as pd
 from .. import config as C
 from ..attribute.regression import FACTOR_LABEL
 from ..diagnose import INDEX_LABEL
+from .. import narrative as N
 
 CSS = """
 :root{--bg:#f9f9f9;--card:#fff;--ink:#191919;--ink2:#666;--line:#e7e7e7;--warm:#dc3c3d;--cool:#257de0}
@@ -77,7 +78,7 @@ def run():
     H: list[str] = []
 
     # ------------------------------------------------------------ 머리말, 요약
-    H.append(f"<h1>한반도 기온·강수 원인 규명 보고서</h1><p class='sub'>분석 기간 {start} ~ {end} (30일) · "
+    H.append(f"<h1>북반구 기후인자와 동아시아(한반도 포함) 기온·강수 원인 규명 보고서</h1><p class='sub'>분석 기간 {start} ~ {end} (30일) · "
              f"평년 {C.CLIM[0]}~{C.CLIM[1]} · 과거 통계 {C.START_YEAR}~현재 · 한반도 값: ERA5 육지 가중 평균</p>")
     explained = rt["predicted"]
     H.append('<div class="tiles">'
@@ -131,7 +132,7 @@ def run():
         ["ERA5 0.25° → 1.5° 상자 평균", "Google ARCO-ERA5 원시 파일 (익명)", f"{C.ARCO_FIRST} ~ {status.get('자료 끝 날짜', end)}",
          "최근 겨울, 최근 한 달"],
         ["10 hPa 동서풍, 10·30 hPa 고도", "WeatherBench2 37층 / ARCO-ERA5", "전 기간", "SSW, 극관 고도"],
-        ["ECMWF ARCO Zarr", "인증 필요", "-", status.get("ECMWF ARCO", "쓰지 않음")],
+        ["ECMWF ARCO Zarr (ERA5T 포함)", "인증 필요 (CDSAPI_KEY)", "-", status.get("ECMWF ARCO", "쓰지 않음")],
         ["기상청 ASOS 일자료", "API 허브 (인증 필요)", "-", status.get("KMA ASOS", "쓰지 않음")],
         ["NOAA 공식 ONI", "CPC", "-", status.get("NOAA ONI", "쓰지 않음")]]))
     H.append("<ul>"
@@ -168,6 +169,52 @@ def run():
              f"850 hPa 바람 편차는 동서 {ll['u_anom']:+.1f}, 남북 {ll['v_anom']:+.1f} m/s, "
              f"수증기 수송 편차는 동서 {ll['qu_anom']:+.1f}, 남북 {ll['qv_anom']:+.1f} g/kg·m/s, 비습 편차는 {ll['q_anom']:+.2f} g/kg였다.</p>")
     H.append(_img("fig05_polar_cap_height.png", "그림 5. 최근 150일의 극관 평균 고도 표준화 편차 (연직-시간 단면)."))
+
+    # ------------------------------------------------------------ 동아시아, 원격상관, 기간 단위, SSW 사례
+    per = json.loads((C.OUT / "periods_summary.json").read_text()) if (C.OUT / "periods_summary.json").exists() else None
+    case = json.loads((C.OUT / "ssw_case.json").read_text()) if (C.OUT / "ssw_case.json").exists() else None
+    if per:
+        last30 = next(p for p in per["periods"] if p["period"]["kind"] == "last30")
+        H.append("<h3>동아시아 하위 영역 (최근 30일, ERA5 육지 가중 평균)</h3>")
+        H.append(_img("fig14_east_asia_maps.png", "그림 14. 동아시아 기온·강수 편차와 하위 영역."))
+        H.append(_table(["영역", "기온 편차", "σ", "백분위", "판정", "강수 평년비", "강수 σ", "판정"],
+                        [[r["name"], _s(r["t"]["value"], 2, "°C"), f"{r['t']['sigma']:+.1f}", f"{r['t']['percentile']:.0f}",
+                          r["t_word"], f"{r['p_ratio']:.0f}%", f"{r['p']['sigma']:+.1f}", r["p_word"]] for r in last30["regions"]]))
+        tl = json.loads((C.OUT / "teleconnection_modes.json").read_text()) if (C.OUT / "teleconnection_modes.json").exists() else {}
+        H.append("<h3>북반구 원격상관 패턴 (최근 30일)</h3>")
+        rows = []
+        for k in ("ao", "nao", "pna", "wp", "eu", "scand"):
+            st = last30["indices"].get(k)
+            if st is None:
+                continue
+            m = tl.get(k, {})
+            rows.append([C.TELE_LABEL[k], f"{st['value']:+.2f}", f"{st['sigma']:+.1f}", f"{st['percentile']:.0f}",
+                         N.sigma_word(st["sigma"]), "해면기압 EOF1" if k == "ao" else
+                         f"회전 EOF {m.get('mode', '-')} (맞춤 {m.get('match', float('nan')):.2f}, 분산 {m.get('var_frac', float('nan')) * 100:.1f}%)"])
+        H.append(_table(["패턴", "30일 평균 지수", "σ", "백분위", "판정", "정의"], rows))
+        H.append("<p class='sub'>AO 외 패턴은 1979~2020년 11~3월 월평균 Z500 편차의 회전 EOF 10개 중 문헌의 활동 중심과 "
+                 "가장 잘 맞는 모드다. 맞춤 점수는 활동 중심에서 부호를 곱한 적재값의 평균을 적재값 최댓값으로 나눈 것(1에 가까울수록 일치).</p>")
+        H.append("<h3>기간 단위별 요약과 설명력</h3>")
+        rows = []
+        for r in per["periods"]:
+            pr = r["period"]
+            kt = next(x for x in r["regions"] if x["key"] == "korea")
+            ea = next(x for x in r["regions"] if x["key"] == "ea")
+            a = r["attribution"]["targets"]
+            rows.append([pr["label"] + ("" if pr["complete"] else f" (진행 중 {pr['n_days']}/{pr['full_days']}일)"),
+                         f"{kt['t']['value']:+.1f}°C ({kt['t']['sigma']:+.1f}σ)", f"{kt['p_ratio']:.0f}%",
+                         f"{ea['t']['value']:+.1f}°C ({ea['t']['sigma']:+.1f}σ)",
+                         f"{a['korea_t']['r2_cv']:.2f}", f"{a['ea_t']['r2_cv']:.2f}", f"{a['korea_p']['r2_cv']:.2f}"])
+        H.append(_table(["기간", "한반도 기온", "한반도 강수", "동아시아 기온", "R²cv 한반도 기온", "R²cv 동아시아 기온",
+                         "R²cv 한반도 강수"], rows))
+        H.append("<p class='sub'>R²cv는 같은 날짜·같은 길이 창으로 학습한 회귀의 해 단위 교차검증 설명력이다. "
+                 "기간이 짧을수록 내부 변동이 커서 설명력이 낮다. 기간별 지도와 기여도는 대시보드(site/)에서 고를 수 있다.</p>")
+    if case:
+        H.append(f"<h2>3-1. {case['title']}</h2>")
+        H.append("<ul>" + "".join(f"<li>{x}</li>" for x in case["sentences"]) + "</ul>")
+        H.append(_img("fig12_ssw_case.png", "그림 12. 최근 120일 10 hPa 동서풍, 극관 10 hPa 기온, 100 hPa 에디 열속, 극관 고도 단면."))
+        if (C.REPORTS / "figures" / "fig13_ssw_history.png").exists() and case.get("detail", {}).get("history", {}).get("n", 0) >= 2:
+            H.append(_img("fig13_ssw_history.png", "그림 13. 이번 사례와 과거 이른 겨울(11~12월) 주 승온 합성의 경과."))
 
     # ------------------------------------------------------------ 과거 영향
     H.append("<h2>4. 인자별 과거 영향 (시차 합성도)</h2>")
@@ -285,7 +332,8 @@ def run():
     # ------------------------------------------------------------ 실행 상태
     H.append("<h2>8. 실행 상태와 자료 검증</h2>")
     if status:
-        H.append(_table(["항목", "상태"], [[a, b] for a, b in status.items()]))
+        H.append(_table(["항목", "상태"], [[a, b if isinstance(b, str) else
+                                             f"<code>{json.dumps(b, ensure_ascii=False)}</code>"] for a, b in status.items()]))
     if "asos" in rec:
         a = rec["asos"]
         H.append(f"<p>ASOS 전국 평균과 ERA5 한반도 평균의 일별 편차 상관은 기온 {a['corr_t']:.2f}, 강수 {a['corr_p']:.2f}다. "
@@ -305,7 +353,7 @@ def run():
 
     html = ("<!doctype html><html lang='ko'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            f"<title>한반도 기온·강수 원인 규명 {end}</title><style>{CSS}</style></head><body><main>"
+            f"<title>동아시아 기온·강수 원인 규명 {end}</title><style>{CSS}</style></head><body><main>"
             + "\n".join(H) + "</main></body></html>")
     C.REPORTS.mkdir(exist_ok=True)
     out = C.REPORTS / f"report_{end}.html"
