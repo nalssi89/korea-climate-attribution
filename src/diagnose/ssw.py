@@ -173,7 +173,9 @@ def sentences(case: dict) -> list[str]:
              " (서풍 10일 연속 복귀를 아직 확인하지 못해 최종승온 여부는 잠정)") +
              f". 10 hPa 60°N 동서평균 동서풍 최저 {d['u']['min']:.1f} m/s({d['u']['min_date']}), "
              f"동풍 일수 {d['u']['easterly_days']}일" +
-             (f", 서풍 복귀 {d['u']['return_date']}." if d['u']['return_date'] else ", 끝 날짜까지 서풍 복귀 없음."))
+             (f", 서풍 10일 연속 복귀 {d['u']['return_date']}부터." if d['u']['return_date'] else
+              (f", 서풍 재개 {d['u']['west_first']}, 끝 날짜까지 {d['u']['west_run_end']}일 연속 서풍"
+               f"(사건 확정 기준인 10일 연속 복귀에는 아직 못 미침)." if d['u']['west_first'] else ", 끝 날짜까지 동풍 지속.")))
     t = d["t10"]
     S.append(f"극관(60~90°N) 10 hPa 기온: 최대 편차 {t['anom_max']:+.1f} K({t['anom_max_date']}, {t['anom_sigma']:+.1f}σ), "
              f"7일 상승 최대 {t['rise7_max']:.1f} K. 극-60°N 기온 경도 최대 {t['grad_max']:+.1f} K"
@@ -232,6 +234,8 @@ def analyze(df: pd.DataFrame, end, rng) -> dict:
         case["detail"] = dict(
             u=dict(min=float(seg.min()), min_date=str(seg.idxmin().date()), easterly_days=int(east.sum()),
                    return_date=None if ret_first is None else str(ret_first.date()),
+                   west_first=None if not (seg > 0).any() else str(seg[seg > 0].index[0].date()),
+                   west_run_end=int(run.iloc[-1]),
                    clim_at_onset=float(series_clim(df.u1060)[d0])),
             t10=dict(anom_max=float(an.max()), anom_max_date=str(an.idxmax().date()),
                      anom_sigma=float(an.max() / day_sigma(df.t10_cap_anom, an.idxmax())),
