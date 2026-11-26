@@ -302,15 +302,15 @@ function drawStrat(dark, ink, warm, cool) {
     m.position.copy(xyz(vlat, vlon, R.strat)); groups.strat.add(m);
     label(pieces >= 2 ? "극소용돌이 (분리)" : "극소용돌이 중심", xyz(vlat, vlon, R.strat + 0.05), "strat", cool);
   }
-  const t10 = ser("t10_cap_anom");
-  if (Number.isFinite(t10) && t10 > 3) {
-    if (!has("t10_anom")) {
-      const glow = new THREE.Mesh(new THREE.CircleGeometry(0.18 + Math.min(t10, 40) / 80, 48),
-        new THREE.MeshBasicMaterial({ color: warm, transparent: true, opacity: Math.min(0.15 + t10 / 40, 0.7), side: THREE.DoubleSide, depthWrite: false }));
-      glow.rotation.x = -Math.PI / 2; glow.position.set(0, R.strat + 0.004, 0); groups.strat.add(glow);
-    }
-    label(`극관 승온 +${t10.toFixed(0)} K`, new THREE.Vector3(0, R.strat + 0.09, 0), "strat", warm);
+  // 승온은 그날 10 hPa 기온 편차장이 있는 곳에만 그린다. 극관 평균값으로 극 둘레에 원을 그리지 않는다(실제 분포가 아니므로).
+  if (has("t10_anom")) {
+    // 실제 승온·냉각 중심: 편차 ±8 K 이상인 국지 극값, 서로 35° 이상 떨어진 것 최대 3개
+    for (const p of extrema(V.slice(F.t10_anom, T), 8, 35, 3))
+      label(`${p.v > 0 ? "승온 +" : "냉각 −"}${Math.abs(p.v).toFixed(0)} K`, xyz(p.lat, p.lon, R.strat + 0.04), "strat", p.v > 0 ? warm : cool, "sm");
   }
+  const t10 = ser("t10_cap_anom");
+  if (Number.isFinite(t10) && Math.abs(t10) >= 3)
+    label(`극관(60~90°N) 평균 ${V.sgn(t10, 0, " K")}`, new THREE.Vector3(0, R.strat + 0.09, 0), "strat", t10 > 0 ? warm : cool, "sm");
   const u = ser("u1060"), ring = [];
   for (let lo = 0; lo <= 360; lo += 4) ring.push(xyz(60, lo, R.strat + 0.003));
   const ringCol = u >= 0 ? (dark ? 0x338ced : 0x257de0) : (dark ? 0xeb6263 : 0xc8393a);
@@ -471,7 +471,8 @@ function keys() {
   const t10 = has("t10_anom");
   const rows = [
     ["성층권 10 hPa", divBar(), t10 ? "−20 ~ +20 K" : "−1500 ~ +1500 m",
-      (t10 ? "면: 기온 편차(빨강 = 승온). " : "면: 극소용돌이 안쪽(가장자리보다 고도가 낮은 곳, 진할수록 깊음). ") +
+      (t10 ? "면: 기온 편차(빨강 = 승온, 파랑 = 냉각). 숫자: ±8 K 넘는 승온·냉각 중심. "
+        : "면: 극소용돌이 안쪽(가장자리보다 고도가 낮은 곳, 진할수록 깊음). 기온 편차 분포는 자료 준비 중이라 극관 평균값만 숫자로 보인다. ") +
       "가는 선: 고도 600 m 간격. <b>굵은 파란 선</b>: 극소용돌이 가장자리(그날 평년 60°N 평균 고도). 60°N 고리: 동서풍(빨강 = 동풍 역전)."],
     ["제트 250 hPa", jetBar(), `${JET_MIN} ~ ${JET_TOP}+ m/s`,
       `면: 풍속 ${JET_MIN} m/s 이상. <b>굵은 주황 선</b>: ${JET_MIN} m/s 등풍속선, 가는 보라 선: 70 m/s. 화살표: 경도 10°마다 제트 축의 바람 방향.`],
