@@ -378,7 +378,7 @@ function drawMid(dark, ink, warm, cool) {
   if (ser("blocked") >= 1) label(`우랄 블로킹 (Z500 ${V.sgn(ser("ural"), 0, " m")})`, xyz(66, 60, R.mid + 0.06), "mid", warm);
 }
 
-// --- 지상·해양: 면은 고른 변수의 편차, 선은 해면기압 편차 등치선과 고·저기압 중심, 해빙·눈덮임 경계
+// --- 지상·해양: 면은 고른 변수의 편차, 선은 해면기압 편차 등치선과 고·저기압 중심, 해빙 경계
 // 해빙·눈덮임·토양수분은 '줄면 빨강(따뜻한 쪽), 늘면 파랑'이 되게 부호를 뒤집어 칠한다.
 const SFC_VARS = {
   t: { name: "기온 (육지 2 m 기온 + 해수면온도)", need: ["t2m_anom", "sst_anom"], range: "육지 ±8 °C · 바다 ±2.5 °C" },
@@ -406,7 +406,7 @@ function drawSfc(dark, ink, warm, cool) {
     if ($("mslChk").checked) {
       const M = fine("msl_anom"), hi = [], lo = [];
       for (let L = 8; L <= 32; L += 8) { hi.push(...contour(M, L)); lo.push(...contour(M, -L)); }
-      // + 붉은 실선, − 파란 점선 (눈덮임 경계의 보라와 헷갈리지 않게 파랑은 분명한 파랑으로)
+      // + 붉은 실선, − 파란 점선
       groups.sfc.add(thinLines(hi, R.sfc + 0.004, dark ? 0xff6b6b : 0xc81e1e, 1));
       groups.sfc.add(thinDashed(lo, R.sfc + 0.004, dark ? 0x4dabf7 : 0x1565c0));
     }
@@ -418,11 +418,7 @@ function drawSfc(dark, ink, warm, cool) {
     groups.sfc.add(tubes(contour(fine("ci"), 0.15), R.sfc + 0.005, 0.0028, ice));
     if (has("ci_clim")) groups.sfc.add(thinLines(contour(fine("ci_clim"), 0.15), R.sfc + 0.005, ice, 0.6));
   }
-  if (has("snowc")) {
-    const sn = dark ? 0xd0bfff : 0x5f3dc4;
-    groups.sfc.add(tubes(contour(fine("snowc"), 0.5), R.sfc + 0.005, 0.0024, sn));
-    if (has("snowc_clim")) groups.sfc.add(thinLines(contour(fine("snowc_clim"), 0.5), R.sfc + 0.005, sn, 0.6));
-  }
+  // 눈덮임은 지상 면 변수(눈덮임 편차)로 칠해 보이므로 경계선은 그리지 않는다
   const kr = new THREE.Mesh(new THREE.SphereGeometry(0.008, 10, 8), new THREE.MeshBasicMaterial({ color: ink }));
   kr.position.copy(xyz(36.5, 127.5, R.sfc + 0.004)); groups.sfc.add(kr);
   label("한반도", xyz(36.5, 131, R.sfc + 0.03), "sfc", null, "sm");
@@ -499,8 +495,7 @@ function keys() {
     ["지상·해양", divBar(), SFC_VARS[sfcVar].range,
       `면: ${SFC_VARS[sfcVar].name} 편차(1991~2020 평년 대비). H/L: 해면기압 편차 중심(±8 hPa 이상, hPa). ` +
         ($("mslChk").checked ? "가는 선: 해면기압 편차 8 hPa 간격(붉은 실선 +, 파란 점선 −). " : "") +
-      (has("ci") ? "<b>청록 굵은 선</b>: 해빙 경계(농도 15%), 가는 선: 평년 경계. " : "") +
-      (has("snowc") ? "<b>보라 굵은 선</b>: 눈덮임 경계(50%), 가는 선: 평년. " : "")],
+      (has("ci") ? "<b>청록 굵은 선</b>: 해빙 경계(농도 15%), 가는 선: 평년 경계. " : "")],
     ["극관 기둥", divBar(), "−3 ~ +3 σ", "층별(1000~10 hPa) 극관 고도 표준화 편차. 위에서 아래로 번지면 하향 전파."],
   ];
   $("keys").innerHTML = rows.map(([n, b, rng, d]) => `<div class="krow"><div class="kh"><b>${n}</b>${b}<span class="small">${rng}</span></div><div class="small">${d}</div></div>`).join("");
