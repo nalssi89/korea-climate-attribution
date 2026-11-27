@@ -208,6 +208,43 @@ def field_clim(name: str) -> xr.DataArray:
     return cl
 
 
+def monthly_to_daily_clim(monthly: xr.DataArray, times, years=C.CLIM) -> xr.DataArray:
+    """월평균 자료로 날짜별 평년값을 만든다.
+
+    평년 기간의 달별 평균(12개)을 각 달의 가운데 날(평년 365일 기준, 1월이면 1월 16일 0시)에 두고,
+    그 사이를 선형으로 순환 보간한다(12월 가운데 ↔ 다음 해 1월 가운데). 날짜 위치는 그해 길이(365/366일)로 나눈 비율로 맞춘다.
+    한계: 선형 보간은 달 평균을 보존하지 않아, 계절 극값 무렵(1월, 7월)의 평년이 실제보다 덜 극단적이다.
+    """
+    base = monthly.sel(time=slice(f"{years[0]}-01-01", f"{years[1]}-12-31"))
+    mclim = base.groupby("time.month").mean("time").sel(month=np.arange(1, 13))
+    ndays = np.array([31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31], dtype=float)
+    mid = (np.cumsum(ndays) - ndays / 2) / 365.0                          # 달 가운데의 해 안 위치(0~1)
+    anchors = np.concatenate([[mid[-1] - 1.0], mid, [mid[0] + 1.0]])     # 앞뒤로 12월·1월을 붙여 순환
+    vals = np.concatenate([mclim.values[-1:], mclim.values, mclim.values[:1]], axis=0)
+    t = pd.DatetimeIndex(times)
+    ylen = np.where(t.is_leap_year, 366.0, 365.0)
+    f = (t.dayofyear.values - 1 + 0.5) / ylen                             # 그날 정오의 해 안 위치
+    i = np.searchsorted(anchors, f, side="right") - 1
+    w = ((f - anchors[i]) / (anchors[i + 1] - anchors[i]))[:, None, None]
+    out = (1 - w) * vals[i] + w * vals[i + 1]
+    return xr.DataArray(out.astype("float32"), dims=("time",) + mclim.dims[1:],
+                        coords={"time": t, **{d: mclim[d].values for d in mclim.dims[1:]}}, name=monthly.name)
+
+
+def skt_clim(times) -> xr.DataArray | None:
+    """지표기온(skin temperature) 날짜별 평년값(K). WeatherBench2에 일평균이 없어 CDS 월평균(1991~2020)을 보간한다.
+
+    월평균 파일(fetch.cds_monthly)이 없으면 None.
+    """
+    p = C.DATA / "cds" / "monthly_skt_stl1.nc"
+    if not p.exists():
+        return None
+    with xr.open_dataset(p) as ds:
+        m = ds["skt"].load()
+    m = m.assign_coords(lat=np.round(m.lat.values, 6), lon=np.round(m.lon.values, 6))
+    return monthly_to_daily_clim(m, times)
+
+
 def window_anom(name: str, start, end) -> xr.DataArray:
     """기간 평균 편차장."""
     da = open_field(name).sel(time=slice(str(start), str(end))).load()

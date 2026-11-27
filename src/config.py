@@ -60,6 +60,9 @@ SFC_FIELDS = {
     # 강제인자(눈덮임, 토양수분). 눈 깊이는 물당량 m, 토양수분은 0~7 cm 층 체적함수율(m³/m³)
     "sd": "snow_depth", "swvl1": "volumetric_soil_water_layer_1",
 }
+# ARCO 원시 자료(2023~)에만 있는 일별 지상 장: WeatherBench2에 없어 1979년부터 이어 붙이지 못한다.
+# 모식도 '지상' 면 변수(지표기온 편차)용이다. 평년은 CDS 월평균(fetch.cds_monthly)으로 만든다(common.skt_clim).
+ARCO_ONLY_FIELDS = {"skt": "skin_temperature"}
 # z10, t10은 성층권 층이라 WB2 37층 자료(과거)와 ARCO 원시 자료(최근)에서 따로 받는다
 STRAT_FIELDS = ["z10", "t10"]
 ALL_FIELDS = list(PL_FIELDS) + list(SFC_FIELDS) + STRAT_FIELDS
