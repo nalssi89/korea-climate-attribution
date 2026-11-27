@@ -213,17 +213,18 @@ function chain(segs) {
   }
   return lines;
 }
-// 점선 관: 이어 붙인 선을 dash개 점마다 그리고 gap개 점만큼 비운다 (점 간격은 대략 격자 1.5°)
-function dashedTubes(segs, r, radius, color, dash = 4, gap = 3) {
-  const g = new THREE.Group(), mat = new THREE.MeshBasicMaterial({ color });
+// 가는 점선: 이어 붙인 선을 dash개 점마다 긋고 gap개 점만큼 비운다 (점 간격은 대략 격자 1.5°)
+function thinDashed(segs, r, color, dash = 3, gap = 2) {
+  const pos = [];
   for (const line of chain(segs)) {
-    if (line.length < 3) continue;
-    for (let i = 0; i < line.length - 1; i += dash + gap) {
-      const pts = line.slice(i, i + dash + 1).map((p) => xyz(p[0], p[1], r));
-      if (pts.length >= 2) g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), pts.length * 2, radius, 5, false), mat));
-    }
+    for (let i = 0; i < line.length - 1; i += dash + gap)
+      for (let j = i; j < Math.min(i + dash, line.length - 1); j++) {
+        const p = xyz(line[j][0], line[j][1], r), q = xyz(line[j + 1][0], line[j + 1][1], r);
+        pos.push(p.x, p.y, p.z, q.x, q.y, q.z);
+      }
   }
-  return g;
+  const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pos), 3));
+  return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color }));
 }
 function tubes(segs, r, radius, color, opacity = 1) {
   const g = new THREE.Group(), mat = new THREE.MeshBasicMaterial({ color, transparent: opacity < 1, opacity });
@@ -377,7 +378,7 @@ function drawMid(dark, ink, warm, cool) {
   if (ser("blocked") >= 1) label(`우랄 블로킹 (Z500 ${V.sgn(ser("ural"), 0, " m")})`, xyz(66, 60, R.mid + 0.06), "mid", warm);
 }
 
-// --- 지상·해양: 면은 고른 변수의 편차, 선은 해면기압 편차 등치선과 고·저기압 중심, 해빙·눈덮임 경계
+// --- 지상·해양: 면은 고른 변수의 편차, 선은 해면기압 편차 등치선과 고·저기압 중심, 해빙 경계
 // 해빙·눈덮임·토양수분은 '줄면 빨강(따뜻한 쪽), 늘면 파랑'이 되게 부호를 뒤집어 칠한다.
 const SFC_VARS = {
   t: { name: "기온 (육지 2 m 기온 + 해수면온도)", need: ["t2m_anom", "sst_anom"], range: "육지 ±8 °C · 바다 ±2.5 °C" },
@@ -401,14 +402,13 @@ function drawSfc(dark, ink, warm, cool) {
     groups.sfc.add(shell(sfcField(sfcVar), R.sfc + 0.002, s.flip ? (v) => fn(-v) : fn));
   }
   if (has("msl_anom")) {
-    // 해면기압 편차 등치선은 면을 가리므로 기본으로 끄고, 켜면 ±8 hPa부터 8 hPa 간격만 그린다
+    // 해면기압 편차 등치선은 면을 가리므로 기본으로 끄고, 켜면 ±8 hPa부터 8 hPa 간격의 가는 선으로 그린다
     if ($("mslChk").checked) {
       const M = fine("msl_anom"), hi = [], lo = [];
       for (let L = 8; L <= 32; L += 8) { hi.push(...contour(M, L)); lo.push(...contour(M, -L)); }
-      // 면 색(빨강·파랑)과 해안선(가는 회색)에 묻히지 않게 굵은 검은 선(어두운 테마는 흰 선)으로: + 실선, − 점선
-      const lc = dark ? 0xf5f5f5 : 0x111111;
-      groups.sfc.add(tubes(hi, R.sfc + 0.004, 0.0026, lc));
-      groups.sfc.add(dashedTubes(lo, R.sfc + 0.004, 0.0026, lc));
+      // + 붉은 실선, − 파란 점선
+      groups.sfc.add(thinLines(hi, R.sfc + 0.004, dark ? 0xff6b6b : 0xc81e1e, 1));
+      groups.sfc.add(thinDashed(lo, R.sfc + 0.004, dark ? 0x4dabf7 : 0x1565c0));
     }
     // 고기압·저기압 편차 중심(±8 hPa 이상, 서로 30° 이상 떨어진 것 최대 6개)은 늘 표시
     for (const p of extrema(V.slice(F.msl_anom, T), 8, 30, 6)) label(`${p.v > 0 ? "H" : "L"} ${V.sgn(p.v, 0)}`, xyz(p.lat, p.lon, R.sfc + 0.02), "sfc", p.v > 0 ? warm : cool, "sm");
@@ -418,11 +418,7 @@ function drawSfc(dark, ink, warm, cool) {
     groups.sfc.add(tubes(contour(fine("ci"), 0.15), R.sfc + 0.005, 0.0028, ice));
     if (has("ci_clim")) groups.sfc.add(thinLines(contour(fine("ci_clim"), 0.15), R.sfc + 0.005, ice, 0.6));
   }
-  if (has("snowc")) {
-    const sn = dark ? 0xd0bfff : 0x5f3dc4;
-    groups.sfc.add(tubes(contour(fine("snowc"), 0.5), R.sfc + 0.005, 0.0024, sn));
-    if (has("snowc_clim")) groups.sfc.add(thinLines(contour(fine("snowc_clim"), 0.5), R.sfc + 0.005, sn, 0.6));
-  }
+  // 눈덮임은 지상 면 변수(눈덮임 편차)로 칠해 보이므로 경계선은 그리지 않는다
   const kr = new THREE.Mesh(new THREE.SphereGeometry(0.008, 10, 8), new THREE.MeshBasicMaterial({ color: ink }));
   kr.position.copy(xyz(36.5, 127.5, R.sfc + 0.004)); groups.sfc.add(kr);
   label("한반도", xyz(36.5, 131, R.sfc + 0.03), "sfc", null, "sm");
@@ -498,9 +494,8 @@ function keys() {
       "면: 고도 편차(작은 편차는 투명, 빨강 + 파랑 −). 숫자: ±120 m 넘는 편차 중심(m). 검은 화살표: 7일 평균 파동활동 플럭스(Takaya-Nakamura, 상위 35%)."],
     ["지상·해양", divBar(), SFC_VARS[sfcVar].range,
       `면: ${SFC_VARS[sfcVar].name} 편차(${sfcVar === "skt" ? "1991~2020 월평균 평년을 날짜별로 보간한 값 대비" : "1991~2020 평년 대비"}). H/L: 해면기압 편차 중심(±8 hPa 이상, hPa). ` +
-        ($("mslChk").checked ? `<b>${V.isDark() ? "흰" : "검은"} 굵은 선</b>: 해면기압 편차 8 hPa 간격(실선 +, 점선 −). ` : "") +
-      (has("ci") ? "<b>청록 굵은 선</b>: 해빙 경계(농도 15%), 가는 선: 평년 경계. " : "") +
-      (has("snowc") ? "<b>보라 굵은 선</b>: 눈덮임 경계(50%), 가는 선: 평년. " : "")],
+        ($("mslChk").checked ? "가는 선: 해면기압 편차 8 hPa 간격(붉은 실선 +, 파란 점선 −). " : "") +
+      (has("ci") ? "<b>청록 굵은 선</b>: 해빙 경계(농도 15%), 가는 선: 평년 경계. " : "")],
     ["극관 기둥", divBar(), "−3 ~ +3 σ", "층별(1000~10 hPa) 극관 고도 표준화 편차. 위에서 아래로 번지면 하향 전파."],
   ];
   $("keys").innerHTML = rows.map(([n, b, rng, d]) => `<div class="krow"><div class="kh"><b>${n}</b>${b}<span class="small">${rng}</span></div><div class="small">${d}</div></div>`).join("");
