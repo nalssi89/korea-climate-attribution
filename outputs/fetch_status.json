@@ -5,9 +5,9 @@
   "arco.datastores.ecmwf.int": "도달",
   "apihub.kma.go.kr": "도달",
   "CDS 월평균 지면온도": "이미 있음 (1979-01~2026-10)",
-  "ECMWF ARCO": "기압면 2026-11-20T18:00까지, 층 50~1000 hPa(10·30 hPa 없음), 해빙 없음. Google 완결 자료(2026-11-21) 뒤 2026-11-21까지 빠진 항목 보충, 겹치는 날 교차 검증",
+  "ECMWF ARCO": "기압면 2026-11-21T18:00까지, 층 50~1000 hPa(10·30 hPa 없음), 해빙 없음. Google 완결 자료(2026-11-21) 뒤 2026-11-21까지 빠진 항목 보충, 겹치는 날 교차 검증",
   "ECMWF ARCO 범위": {
-    "pl_end": "2026-11-20T18:00",
+    "pl_end": "2026-11-21T18:00",
     "sl_end": "2026-11-21T23:00",
     "pl_coord_end": "2026-11-21T18:00",
     "levels": [
@@ -31,19 +31,19 @@
     "date": "2026-11-21",
     "fields": {
       "z500": {
-        "bias": NaN,
-        "rmse": NaN,
-        "corr": NaN
+        "bias": -0.0005,
+        "rmse": 0.0292,
+        "corr": 1.0
       },
       "t850": {
-        "bias": NaN,
-        "rmse": NaN,
-        "corr": NaN
+        "bias": 0.0,
+        "rmse": 0.0097,
+        "corr": 1.0
       },
       "u250": {
-        "bias": NaN,
-        "rmse": NaN,
-        "corr": NaN
+        "bias": -0.0014,
+        "rmse": 0.0568,
+        "corr": 0.999995
       },
       "msl": {
         "bias": 0.0001,
@@ -52,7 +52,7 @@
       }
     }
   },
-  "KMA ASOS": "완료: 4개 해 새로 받음 (키 이름 KMA_AUTHKEY)",
+  "KMA ASOS": "완료: 14개 해 새로 받음 (키 이름 KMA_AUTHKEY)",
   "NOAA ONI": "건너뜀: cpc.ncep.noaa.gov에 닿지 않음 (ProxyError)",
   "자료 끝 날짜": "2026-11-21",
   "Google ARCO-ERA5 원시 자료 끝": "2026-11-21"

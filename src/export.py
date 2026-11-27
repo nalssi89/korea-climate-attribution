@@ -216,6 +216,15 @@ def schematic_file(df: pd.DataFrame, end: pd.Timestamp, case: dict, days: int = 
             put(key, da.sel(lat=slice(21, 84) if name == "swvl1" else slice(0, 90)).isel(**s3), unit, scale)
             if name == "skt":
                 out["fields"][key]["clim"] = "CDS 월평균 1991~2020을 달 가운데 날 기준으로 선형 순환 보간"
+    # 강수 편차(북반구 0~90°N): 일강수 편차는 잡음이 커서 그날로 끝나는 7일 평균(그날 포함 앞 7일)으로 싣는다. mm/일, 3°
+    if (C.DATA / "merged" / "tp_nh.nc").exists():
+        da = open_field("tp_nh").sel(time=slice(t0 - pd.Timedelta(days=6), end)).load()
+        da = anomaly(da, field_clim("tp_nh")).rolling(time=7).mean().sel(time=slice(t0, end))
+        assert da.time.size == len(times) and not bool(da.isnull().any()), "tp_nh: 7일 평균에 빈 날이 있다"
+        # 0.2 mm/일 간격 int8(±25.4 mm/일). 0.1 간격(±12.7)이면 열대 바다 값의 약 1.5%가 끝값으로 잘렸다(2026-11-21 기준 90일).
+        # 화면 색 범위(±6 mm/일)에서 0.2 mm/일은 충분히 잘다
+        put("tp_anom", da.sel(lat=slice(0, 90)).isel(**s3), "mm/일", 0.2, int8=True)
+        out["fields"]["tp_anom"]["window"] = "그날로 끝나는 7일 평균"
     # 파동활동 플럭스: 날마다 앞뒤 3일(7일) 평균 편차로 계산, 6° 간격
     fx, fy = [], []
     for t in times:

@@ -120,6 +120,16 @@ def validate(arco: xr.Dataset) -> pd.DataFrame:
         rows.append(dict(field=name, n_day=int(w.time.size), bias=float(d[ok].mean()),
                          rmse=float(np.sqrt((d[ok] ** 2).mean())), wb2_std=float(np.nanstd(w.values)),
                          corr=float(np.corrcoef(a[ok], w.values[ok])[0, 1])))
+        if name in C.PRECIP_FIELDS:
+            # 일 누적의 시각 기준 점검: ARCO 일합(그날 00~23 UTC 시각값의 합)을 WB2와 하루 앞뒤로 어긋나게 맞춰 본다.
+            # 같은 날(lag 0)의 상관이 가장 높아야 두 자료의 날짜 기준이 같다는 뜻이다
+            wv = w.values
+            for lag in (-1, 1):
+                xa, yw = (a[lag:], wv[:-lag]) if lag > 0 else (a[:lag], wv[-lag:])   # lag=+1: ARCO 다음 날 vs WB2 그날
+                dd = xa - yw
+                rows.append(dict(field=f"{name}_lag{lag:+d}", n_day=int(xa.shape[0]), bias=float(dd.mean()),
+                                 rmse=float(np.sqrt((dd ** 2).mean())), wb2_std=float(np.nanstd(yw)),
+                                 corr=float(np.corrcoef(xa.ravel(), yw.ravel())[0, 1])))
     wu, au = wst.u1060.sel(time=sl).values, a_all.u1060.values
     rows.append(dict(field="u1060", n_day=len(wu), bias=float((au - wu).mean()),
                      rmse=float(np.sqrt(((au - wu) ** 2).mean())), wb2_std=float(wu.std()),

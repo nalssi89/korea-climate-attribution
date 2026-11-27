@@ -9,7 +9,7 @@ Zarr 저장소는 기압면 한 시각이 37층 전구 한 덩어리(약 118 MB)
 
 기압면·해면기압·눈 깊이·토양수분은 00/06/12/18 UTC 평균, 기온·지표기온·강수는 24시각 평균·합, 해수면온도·해빙은 00 UTC.
 2 m 기온은 북반구 전체(0~90°N)를 24시각 평균으로 받는다. 동아시아 지수가 예전(동아시아만 받던 때)과 같은 값이 되게
-시각 수를 줄이지 않았다. 강수는 동아시아 영역만 받는다.
+시각 수를 줄이지 않았다. 강수는 동아시아 영역(tp, 동아시아 지수용)과 북반구 전체(tp_nh, 모식도용)를 따로 만든다.
 0.25° 자료를 WeatherBench2와 같은 1.5° 격자로 상자 평균해 하루 한 파일로 저장한다.
 """
 from __future__ import annotations
@@ -79,6 +79,7 @@ def items() -> list[Item]:
     ea_rows, ea_cols = _rows(*C.EA_LAT), _cols(*C.EA_LON)
     out.append(Item("t2m", f"SL/{s['t2m']}/surface.nc", H24, nh, "nh"))
     out.append(Item("tp", f"SL/{s['tp']}/surface.nc", H24, ea_rows, "ea", ea_cols))
+    out.append(Item("tp_nh", f"SL/{s['tp_nh']}/surface.nc", H24, nh, "nh"))      # 같은 파일, 북반구 24시각 합
     out.append(Item("sst", f"SL/{s['sst']}/surface.nc", (0,), _rows(C.LAT_SST[0], 90), "sst"))
     out.append(Item("ci", f"SL/{s['ci']}/surface.nc", (0,), nh, "nh"))
     out.append(Item("sd", f"SL/{s['sd']}/surface.nc", H6, nh, "nh"))
@@ -234,11 +235,11 @@ def reduce_day(arrs: dict[str, np.ndarray], its: list[Item]) -> xr.Dataset:
         elif it.kind == "cap":
             cap[int(it.key[3:])] = _cap_mean(a.mean((0, 2)) / C.G, LAT_SRC[it.rows[0]:it.rows[1] + 1])
         elif it.kind == "ea":
-            day = a.sum(0) * 1000.0 if it.key == "tp" else a.mean(0)
+            day = a.sum(0) * 1000.0 if it.key in C.PRECIP_FIELDS else a.mean(0)
             ds[it.key] = (("lat_ea", "lon_ea"), box_regrid(day, *_weights(it, EA_LAT_T, EA_LON_T)))
         else:
             tgt = C.LAT_SST if it.kind == "sst" else C.LAT_NH
-            day = a.mean(0)
+            day = a.sum(0) * 1000.0 if it.key in C.PRECIP_FIELDS else a.mean(0)
             if it.key.startswith("z"):
                 day = day / C.G
                 lev = int(it.key[1:])
@@ -286,13 +287,17 @@ def read_items(date: dt.date, its: list[Item]) -> dict[str, np.ndarray]:
         got = _read_cdf(fs, [paths[i] for i in ci], [its[i] for i in ci], [heads[i] for i in ci])
         arrs.update({its[i].key: g for i, g in zip(ci, got)})
     hi = [i for i, c in enumerate(is_cdf) if not c]
-    for k in range(0, len(hi), 8):        # 압축 파일은 8개씩 통째로 받아 메모리에서 푼다
-        part = hi[k:k + 8]
-        blobs = fs.cat_ranges([paths[i] for i in part], None, None)
-        for i, blob in zip(part, blobs):
+    # 압축 파일은 8개씩 통째로 받아 메모리에서 푼다. 같은 파일을 쓰는 항목(tp, tp_nh)은 한 번만 받는다
+    upaths = list(dict.fromkeys(paths[i] for i in hi))
+    for k in range(0, len(upaths), 8):
+        part = upaths[k:k + 8]
+        blobs = fs.cat_ranges(part, None, None)
+        for p, blob in zip(part, blobs):
             if isinstance(blob, Exception):
-                raise RuntimeError(f"{paths[i]}: {blob!r}")
-            arrs[its[i].key] = _read_hdf(blob, its[i])
+                raise RuntimeError(f"{p}: {blob!r}")
+            for i in hi:
+                if paths[i] == p:
+                    arrs[its[i].key] = _read_hdf(blob, its[i])
     return arrs
 
 
