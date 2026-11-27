@@ -401,14 +401,13 @@ function drawSfc(dark, ink, warm, cool) {
     groups.sfc.add(shell(sfcField(sfcVar), R.sfc + 0.002, s.flip ? (v) => fn(-v) : fn));
   }
   if (has("msl_anom")) {
-    // 해면기압 편차 등치선은 면을 가리므로 기본으로 끄고, 켜면 ±8 hPa부터 8 hPa 간격만 그린다
+    // 해면기압 편차 등치선은 면을 가리므로 기본으로 끄고, 켜면 ±6 hPa부터 6 hPa 간격으로 그린다
     if ($("mslChk").checked) {
       const M = fine("msl_anom"), hi = [], lo = [];
-      for (let L = 8; L <= 32; L += 8) { hi.push(...contour(M, L)); lo.push(...contour(M, -L)); }
-      // 면 색(빨강·파랑)과 해안선(가는 회색)에 묻히지 않게 굵은 검은 선(어두운 테마는 흰 선)으로: + 실선, − 점선
-      const lc = dark ? 0xf5f5f5 : 0x111111;
-      groups.sfc.add(tubes(hi, R.sfc + 0.004, 0.0026, lc));
-      groups.sfc.add(dashedTubes(lo, R.sfc + 0.004, 0.0026, lc));
+      for (let L = 6; L <= 30; L += 6) { hi.push(...contour(M, L)); lo.push(...contour(M, -L)); }
+      // 해안선(가는 회색)과 구분되게 굵은 관으로, 면보다 진한 색으로: + 붉은 실선, − 파란 점선
+      groups.sfc.add(tubes(hi, R.sfc + 0.004, 0.0026, dark ? 0xff8a80 : 0xa50f15));
+      groups.sfc.add(dashedTubes(lo, R.sfc + 0.004, 0.0026, dark ? 0x82b1ff : 0x08519c));
     }
     // 고기압·저기압 편차 중심(±8 hPa 이상, 서로 30° 이상 떨어진 것 최대 6개)은 늘 표시
     for (const p of extrema(V.slice(F.msl_anom, T), 8, 30, 6)) label(`${p.v > 0 ? "H" : "L"} ${V.sgn(p.v, 0)}`, xyz(p.lat, p.lon, R.sfc + 0.02), "sfc", p.v > 0 ? warm : cool, "sm");
@@ -498,7 +497,7 @@ function keys() {
       "면: 고도 편차(작은 편차는 투명, 빨강 + 파랑 −). 숫자: ±120 m 넘는 편차 중심(m). 검은 화살표: 7일 평균 파동활동 플럭스(Takaya-Nakamura, 상위 35%)."],
     ["지상·해양", divBar(), SFC_VARS[sfcVar].range,
       `면: ${SFC_VARS[sfcVar].name} 편차(1991~2020 평년 대비). H/L: 해면기압 편차 중심(±8 hPa 이상, hPa). ` +
-        ($("mslChk").checked ? `<b>${V.isDark() ? "흰" : "검은"} 굵은 선</b>: 해면기압 편차 8 hPa 간격(실선 +, 점선 −). ` : "") +
+        ($("mslChk").checked ? "<b>굵은 선</b>: 해면기압 편차 6 hPa 간격(붉은 실선 +, 파란 점선 −). " : "") +
       (has("ci") ? "<b>청록 굵은 선</b>: 해빙 경계(농도 15%), 가는 선: 평년 경계. " : "") +
       (has("snowc") ? "<b>보라 굵은 선</b>: 눈덮임 경계(50%), 가는 선: 평년. " : "")],
     ["극관 기둥", divBar(), "−3 ~ +3 σ", "층별(1000~10 hPa) 극관 고도 표준화 편차. 위에서 아래로 번지면 하향 전파."],
