@@ -56,16 +56,38 @@ def _fill_pole(da: xr.DataArray) -> xr.DataArray:
     return da.where(da.lat < 90, da.sel(lat=88.5).mean("lon"))
 
 
+def _arco_only_up_to_date(path, end: dt.date) -> bool:
+    if not path.exists():
+        return False
+    with xr.open_dataset(path) as ds:
+        t = pd.DatetimeIndex(ds.time.values)
+    return t[-1].date() == end and str(t[0].date()) == C.ARCO_FIRST
+
+
+def build_arco_only(name: str, arco: xr.Dataset, days: list[dt.date]) -> None:
+    """WB2에 없는 장(C.ARCO_ONLY_FIELDS)은 ARCO 기간(2023~)만 병합한다. 평년값은 그 장에 맞는 다른 방법으로 만든다."""
+    da = _round(arco[name]).sel(lat=C.LAT_NH, lon=C.LON).astype("float32").rename(name)
+    assert da.time.to_index().is_unique and da.time.size == len(days), f"{name}: 날짜가 빠졌거나 겹친다"
+    atomic_to_netcdf(da.to_dataset(), C.DATA / "merged" / f"{name}.nc")
+    log.info("병합(ARCO 기간만) %s %s", name, dict(da.sizes))
+
+
 def build(end: dt.date) -> None:
     out = C.DATA / "merged"
     start = dt.date.fromisoformat(C.ARCO_FIRST)
     days = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
     targets = C.ALL_FIELDS + ["strat"]
-    if all(_up_to_date(out / f"{n}.nc", end) for n in targets):
+    main_ok = all(_up_to_date(out / f"{n}.nc", end) for n in targets)
+    extra = [n for n in C.ARCO_ONLY_FIELDS if not _arco_only_up_to_date(out / f"{n}.nc", end)]
+    if main_ok and not extra:
         log.info("병합 파일이 이미 %s까지 있다", end)
         return
     log.info("ARCO 일파일 %d개 읽는 중", len(days))
     arco = _arco(days)
+    for name in extra:
+        build_arco_only(name, arco, days)
+    if main_ok:
+        return
     strat_w = _wb2_strat(C.WB2_LAST_YEAR)
     for name in C.ALL_FIELDS:
         w = strat_w[name] if name in C.STRAT_FIELDS else _wb2(name, C.WB2_LAST_YEAR)[name]

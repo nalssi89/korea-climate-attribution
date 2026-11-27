@@ -7,7 +7,7 @@ Zarr 저장소는 기압면 한 시각이 37층 전구 한 덩어리(약 118 MB)
 - 그 뒤 파일: 압축된 netCDF4(HDF5) → h5py로 필요한 청크만 읽는다.
   (형식은 날짜가 아니라 파일 첫 바이트로 가린다.)
 
-기압면·해면기압·눈 깊이·토양수분은 00/06/12/18 UTC 평균, 기온·강수는 24시각 평균·합, 해수면온도·해빙은 00 UTC.
+기압면·해면기압·눈 깊이·토양수분은 00/06/12/18 UTC 평균, 기온·지표기온·강수는 24시각 평균·합, 해수면온도·해빙은 00 UTC.
 2 m 기온은 북반구 전체(0~90°N)를 24시각 평균으로 받는다. 동아시아 지수가 예전(동아시아만 받던 때)과 같은 값이 되게
 시각 수를 줄이지 않았다. 강수는 동아시아 영역만 받는다.
 0.25° 자료를 WeatherBench2와 같은 1.5° 격자로 상자 평균해 하루 한 파일로 저장한다.
@@ -83,6 +83,8 @@ def items() -> list[Item]:
     out.append(Item("ci", f"SL/{s['ci']}/surface.nc", (0,), nh, "nh"))
     out.append(Item("sd", f"SL/{s['sd']}/surface.nc", H6, nh, "nh"))
     out.append(Item("swvl1", f"SL/{s['swvl1']}/surface.nc", H6, nh, "nh"))
+    # 지표기온: 일변화가 커서 24시각 평균. 평년으로 쓰는 CDS 월평균(모든 시각의 평균)과 정의를 맞춘다
+    out.append(Item("skt", f"SL/{C.ARCO_ONLY_FIELDS['skt']}/surface.nc", H24, nh, "nh"))
     return out
 
 

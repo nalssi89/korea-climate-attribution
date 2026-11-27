@@ -16,7 +16,7 @@ import pandas as pd
 import xarray as xr
 
 from . import config as C
-from .common import anomaly, field_clim, get_logger, open_field, series_clim, window_anom
+from .common import anomaly, field_clim, get_logger, open_field, series_clim, skt_clim, window_anom
 
 log = get_logger("export")
 SITE = C.ROOT / "site"
@@ -200,11 +200,22 @@ def schematic_file(df: pd.DataFrame, end: pd.Timestamp, case: dict, days: int = 
     # 지상 면 변수 선택용 (일별 장이 있을 때만): 표층 토양수분, 지표기온(skin temperature)
     for key, name, unit, scale in (("swvl1_anom", "swvl1", "m³/m³", 0.002), ("skt_anom", "skt", "°C", 0.2)):
         if (C.DATA / "merged" / f"{name}.nc").exists():
-            da = daily(name)
+            if name == "skt":        # 일별 평년(field_clim)이 없다: CDS 월평균 평년(1991~2020)을 날짜별로 보간해 뺀다
+                da = daily(name, anom=False)
+                cl = skt_clim(da.time.values)
+                if cl is None:
+                    log.warning("CDS 월평균 지표기온 파일이 없어 모식도 지표기온 편차를 내보내지 않는다")
+                    continue
+                cl = cl.reindex(lat=da.lat, lon=da.lon, method="nearest", tolerance=0.01)
+                da = da - cl.values
+            else:
+                da = daily(name)
             if name == "swvl1":      # 토양수분은 육지에서만 뜻이 있다
                 lf = xr.open_dataarray(C.DATA / "static" / "landfrac_nh.nc").reindex(lat=da.lat, lon=da.lon, method="nearest")
                 da = da.where(lf >= C.LAND_MIN)
             put(key, da.sel(lat=slice(21, 84) if name == "swvl1" else slice(0, 90)).isel(**s3), unit, scale)
+            if name == "skt":
+                out["fields"][key]["clim"] = "CDS 월평균 1991~2020을 달 가운데 날 기준으로 선형 순환 보간"
     # 파동활동 플럭스: 날마다 앞뒤 3일(7일) 평균 편차로 계산, 6° 간격
     fx, fy = [], []
     for t in times:

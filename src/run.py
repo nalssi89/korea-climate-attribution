@@ -21,6 +21,22 @@ from .common import get_logger
 log = get_logger("run")
 
 
+def _fetch_subprocess(end: dt.date | None) -> dt.date:
+    """자료 수집·병합(fetch.run)을 별도 프로세스에서 돌리고, 확보한 마지막 날짜를 돌려준다.
+
+    병합 단계는 1979년 이후 모든 장을 메모리에 올린다. 같은 프로세스에서 지수 계산까지 이어 가면 그 메모리가 반환되지 않아
+    15 GB 컨테이너에서 강제 종료(OOM)된 적이 있다(2026-11-27). 프로세스를 나누면 끝날 때 메모리가 모두 반환된다.
+    """
+    import json
+    import subprocess
+    import sys
+    arg = f"dt.date.fromisoformat('{end.isoformat()}')" if end else "None"
+    subprocess.run([sys.executable, "-c", f"import datetime as dt; from src import fetch; fetch.run({arg})"],
+                   cwd=C.ROOT, check=True)
+    status = json.loads((C.OUT / "fetch_status.json").read_text())
+    return dt.date.fromisoformat(status["자료 끝 날짜"])
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--end", type=dt.date.fromisoformat, default=None, help="분석 기간의 끝 날짜 (YYYY-MM-DD)")
@@ -33,8 +49,7 @@ def main() -> None:
         with xr.open_dataset(C.DATA / "merged" / "z500.nc") as ds:
             data_end = pd.Timestamp(ds.time.values[-1]).date()
     else:
-        from . import fetch
-        data_end = fetch.run(args.end)
+        data_end = _fetch_subprocess(args.end)
     end = min(args.end, data_end) if args.end else data_end
     start = end - dt.timedelta(days=C.WINDOW_DAYS - 1)
     log.info("분석 기간: %s ~ %s (자료 끝 %s)", start, end, data_end)
