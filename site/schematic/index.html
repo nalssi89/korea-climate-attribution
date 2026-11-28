@@ -12,7 +12,7 @@
   #stage { position: relative; width: 100%; height: min(72vh, 760px); min-height: 360px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; touch-action: none; }
   #stage canvas { display: block; width: 100%; height: 100%; }
   .hud { position: absolute; left: 10px; top: 10px; background: color-mix(in srgb, var(--surface) 86%, transparent); border: 1px solid var(--line);
-    border-radius: 10px; padding: 8px 10px; font-size: .82rem; line-height: 1.45; font-variant-numeric: tabular-nums; max-width: calc(100% - 20px); pointer-events: none; }
+    border-radius: 10px; padding: 8px 10px; font-size: .82rem; line-height: 1.45; font-variant-numeric: tabular-nums; max-width: calc(100% - 20px); pointer-events: none; z-index: 2; }
   .hud .d { font-size: 1.05rem; font-weight: 700; }
   .hud .ev { color: var(--warm); font-weight: 600; }
   .lbl { position: absolute; transform: translate(-50%, -50%); font-size: 12px; font-weight: 700; pointer-events: none; text-shadow: 0 0 3px var(--surface), 0 0 3px var(--surface); white-space: nowrap; }
@@ -25,6 +25,14 @@
   .lbl.sm { font-size: 11px; font-weight: 600; }
   .lbl.tag { font-size: 11.5px; font-weight: 700; color: var(--ink-2); background: color-mix(in srgb, var(--surface) 80%, transparent);
     border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; transform: translate(calc(-100% - 14px), -50%); }
+  .lbl.lft { transform: translate(12px, -50%); }
+  .lbl.bx { background: color-mix(in srgb, var(--surface) 82%, transparent); border-radius: 5px; padding: 0 4px; text-shadow: none; }
+  .stagewrap { position: relative; }
+  /* 좁은 화면: 요약 상자가 무대를 가리지 않게 무대 위로 뺀다 */
+  @media (max-width: 560px) { .stagewrap .hud { position: static; max-width: none; margin-bottom: 6px; font-size: .78rem; } }
+  #stage #pchInset { position: absolute; left: 10px; bottom: 10px; width: min(330px, calc(100% - 20px)); height: 150px; background: color-mix(in srgb, var(--surface) 90%, transparent);
+    border: 1px solid var(--line); border-radius: 10px; cursor: crosshair; touch-action: none; }
+  @media (max-width: 560px) { #stage #pchInset { width: min(250px, calc(100% - 20px)); height: 124px; } }
   .layers label { margin-right: 10px; font-size: .88rem; white-space: nowrap; }
   .seg { display: inline-flex; flex-wrap: wrap; gap: 4px; }
   .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
@@ -70,16 +78,16 @@
     <select id="gapSel" aria-label="층 간격"><option value="0.5">층 간격 좁게</option><option value="1" selected>층 간격 보통</option><option value="1.8">층 간격 넓게</option></select>
     <button type="button" id="resetBtn">시점 초기화</button>
   </div>
-  <div id="stage"><div class="hud" id="hud">자료 불러오는 중…</div></div>
+  <div class="stagewrap"><div class="hud" id="hud">자료 불러오는 중…</div><div id="stage"><canvas id="pchInset" role="img" aria-label="극관 고도 표준화 편차의 시간–고도 단면. 누르면 그 날짜로 이동"></canvas></div></div>
   <div class="card keys" id="keys" style="margin-top:10px"></div>
   <div class="card" style="margin-top:12px">
     <b>읽는 순서</b>
     <ol class="guide">
-      <li><b>성층권</b>: 굵은 파란 선(극소용돌이 가장자리)이 극에서 밀려나거나 둘로 갈라지고, 극 쪽 면이 빨개지면 돌연승온이다.</li>
+      <li><b>성층권</b>: 고도 등치선이 감싼 극소용돌이(중심은 점)가 극에서 밀려나거나 둘로 갈라지고, 극 쪽 면이 빨개지면 돌연승온이다.</li>
       <li><b>제트</b>: 색칠된 띠가 풍속 50 m/s 이상인 곳이다. 띠가 남북으로 크게 굽이칠수록 파동이 강하다.</li>
       <li><b>500 hPa</b>: 빨간 덩어리(+)는 기압능·블로킹, 파란 덩어리(−)는 기압골이다. 검은 화살표는 파동 에너지가 퍼져 가는 방향이다.</li>
       <li><b>지상·해양</b>: 면은 고른 변수(기본: 육지 기온·해수면온도)의 편차, H/L은 해면기압 편차 중심이다(해빙·눈덮임은 지상 면 변수에서 '해빙 농도'·'눈덮임'을 고르면 색으로 보인다). 해면기압 등치선은 '해면기압 편차 선'을 켜면 가는 붉은 실선(+)·파란 점선(−)으로 보인다.</li>
-      <li><b>극관 기둥</b>: 위층의 색이 며칠에 걸쳐 아래층으로 내려오면 성층권 영향이 지상까지 내려온 것이다.</li>
+      <li><b>극관 기둥</b>: 검은 화살표(상향)는 대류권 파동이 성층권으로 올라가는 날에 뜬다. 색 화살표(하향)는 성층권 편차가 이어져 내려온 깊이로, 재생하면서 화살표가 아래로 길어지면 하향 전파다. 왼쪽 아래 시간–고도 단면에서 색 띠가 오른쪽 아래로 기울어 내려오는지 함께 본다.</li>
     </ol>
   </div>
   <p class="small" id="notes"></p>

@@ -56,7 +56,9 @@ def pch_std_anom(pcap: xr.DataArray) -> xr.DataArray:
     doy = xr.DataArray(_doy366(pcap.time), dims="time")
     anom = (pcap - sm_mean.sel(doy=doy)).drop_vars("doy")
     var = (anom.sel(time=base.time) ** 2).groupby(doy_b).mean("time")
-    sm_sd = np.sqrt(var.copy(data=np.maximum(_harmonic_smooth(var.values.astype("float64")), 1e-6)))
+    # 분산은 로그를 평활한다. 10 hPa는 겨울 분산이 여름의 수백 배라, 분산을 그대로 조화 평활하면 늦여름(8~9월)에
+    # 0 아래로 내려가 표준편차가 0에 가까워지고 표준화 편차가 수만 σ로 튀었다(2026-11-28 확인). 로그는 늘 양수로 돌아온다
+    sm_sd = np.sqrt(var.copy(data=np.exp(_harmonic_smooth(np.log(np.maximum(var.values.astype("float64"), 1e-6))))))
     return (anom / sm_sd.sel(doy=doy)).drop_vars("doy").rename("pch")
 
 

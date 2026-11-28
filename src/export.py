@@ -16,7 +16,7 @@ import pandas as pd
 import xarray as xr
 
 from . import config as C
-from .common import anomaly, field_clim, get_logger, open_field, series_clim, skt_clim, window_anom
+from .common import anomaly, field_clim, get_logger, open_field, series_clim, series_std_anom, skt_clim, window_anom
 
 log = get_logger("export")
 SITE = C.ROOT / "site"
@@ -164,9 +164,6 @@ def schematic_file(df: pd.DataFrame, end: pd.Timestamp, case: dict, days: int = 
 
     # 10 hPa: 고도(극소용돌이 모양)와 기온 편차(승온)
     put("z10", daily("z10", anom=False).sel(**sl).isel(**s45), "m", 10.0, 30000.0)
-    # 극소용돌이 가장자리: 그날의 평년 60°N 동서평균 10 hPa 고도 (indices.strat.vortex_geometry와 같은 정의)
-    edge = series_clim(open_field("z10").sel(lat=60.0).mean("lon").to_series())[t0:end]
-    out["z10_edge"] = edge.round(0).tolist()
     put("t10_anom", daily("t10").sel(**sl).isel(**s45), "K", 0.2)
     # 250 hPa 바람(풍속 등치선용), 500 hPa 고도 편차: 3°
     # 용량(5 MB 안쪽)을 위해 1바이트로 싣는다: 바람 1 m/s(±127), 고도 편차 4 m(±508 m) 간격. 화면 등치선 간격(10 m/s, 60 m)보다 충분히 잘다
@@ -240,6 +237,9 @@ def schematic_file(df: pd.DataFrame, end: pd.Timestamp, case: dict, days: int = 
     out["series"] = {k: d[k].tolist() for k in ("u1060", "ural", "blocked", "ao", "nino34", "t10_cap_anom", "korea_t",
                                                 "ea_t", "vortex_lat", "vortex_lon", "vortex_pieces", "siberian_high",
                                                 "aleutian", "vt100_anom") if k in d}
+    # 100 hPa 에디 열속의 표준화 편차(σ): 극관 기둥의 '상향 파동' 화살표와 시간-고도 단면 아래 띠에 쓴다
+    if "vt100" in df:
+        out["series"]["vt100_z"] = series_std_anom(df["vt100"]).reindex(times).round(2).tolist()
     ub = pd.read_csv(C.OUT / "events_ural_blocking.csv")
     ub = ub[(pd.to_datetime(ub.end) >= t0)]
     marks = [dict(date=str(r.onset), kind="ural", label=f"우랄블로킹 시작 ({r.duration}일)") for r in ub.itertuples()
