@@ -84,9 +84,20 @@ const seqColor = (t) => {
 };
 const smooth = (e0, e1, x) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
 // 발산 색: 작은 편차는 투명하게 두어 중심이 드러나게 한다
-const divFn = (vmax, alpha, floor = 0.12) => (v) => {
+// 강수용 갈색–녹색 발산 색표: 적음(−) 갈색, 많음(+) 녹색, 가운데는 무채색.
+// 양쪽 대표색(밝은 테마 #a6611a·#18a070, 어두운 테마 #b97f30·#2ea877)은 적록 색각 이상 모의에서도 구분된다(OKLab ΔE 9.7, 8.2)
+const WETDRY = {
+  light: ["#5a3306", "#a6611a", "#cf9a52", "#ecd3a6", "#efefef", "#b3e3cd", "#5cc09a", "#18a070", "#0a5c3e"],
+  dark: ["#f0cf96", "#d9a253", "#b97f30", "#5e4420", "#383838", "#1c5440", "#2ea877", "#4cc492", "#a5ecc8"],
+};
+const wetDry = (t) => {      // t: -1(적음) ~ 1(많음) -> [r, g, b] 0~255
+  const pal = V.isDark() ? WETDRY.dark : WETDRY.light, f = (Math.max(-1, Math.min(1, t)) + 1) / 2 * (pal.length - 1);
+  const i = Math.min(Math.floor(f), pal.length - 2), d = f - i, a = hex(pal[i]), b = hex(pal[i + 1]);
+  return [0, 1, 2].map((k) => Math.round((a[k] + (b[k] - a[k]) * d) * 255));
+};
+const divFn = (vmax, alpha, floor = 0.12, colorOf = V.divColor) => (v) => {
   if (!Number.isFinite(v)) return null;
-  const t = Math.max(-1, Math.min(1, v / vmax)), [r, g, b] = V.divColor(t);
+  const t = Math.max(-1, Math.min(1, v / vmax)), [r, g, b] = colorOf(t);
   return [r / 255, g / 255, b / 255, alpha * smooth(floor, floor + 0.45, Math.abs(t))];
 };
 const jetFn = (v) => {
@@ -294,21 +305,22 @@ function draw() {
   drawJet(dark, ink);
   drawMid(dark, ink, warm, cool);
   drawSfc(dark, ink, warm, cool);
-  drawColumn();
+  drawColumn(dark, ink, warm, cool);
   layerTags();
   hud();
 }
 
-// --- 성층권 10 hPa: 기온 편차(면), 고도 등치선(극소용돌이 모양), 가장자리(굵은 선), 중심, 60°N 동서풍 고리
+// --- 성층권 10 hPa: 기온 편차(면), 고도 등치선(극소용돌이 모양), 중심, 60°N 동서풍 고리
+// 평년 60°N 평균 고도로 잡던 '가장자리' 굵은 선은 그리지 않는다. 소용돌이 모양은 그날 고도 등치선으로 본다.
 function drawStrat(dark, ink, warm, cool) {
-  const z10 = fine("z10", 2.25), edge = D.z10_edge[T];
+  const z10 = fine("z10", 2.25);
   if (has("t10_anom")) groups.strat.add(shell(fine("t10_anom", 2.25), R.strat, divFn(20, 0.8, 0.1)));
-  else groups.strat.add(shell(map2(z10, null, (v) => Math.min(v - edge, 0)), R.strat, divFn(1500, 0.45, 0.05)));   // 기온장이 없으면 소용돌이 안쪽만
-  // 고도 등치선 600 m 간격 (가장자리 고도 기준)
+  // 고도 등치선: 600 m의 배수마다 (그날 값 범위 안에서)
+  let zlo = Infinity, zhi = -Infinity;
+  for (const v of z10.a) if (Number.isFinite(v)) { if (v < zlo) zlo = v; if (v > zhi) zhi = v; }
   const segs = [];
-  for (let L = edge - 3000; L <= edge + 1800; L += 600) if (L !== edge) segs.push(...contour(z10, L));
-  groups.strat.add(thinLines(segs, R.strat + 0.001, dark ? 0xb9c3cc : 0x4a5560, 0.55));
-  groups.strat.add(tubes(contour(z10, edge), R.strat + 0.002, 0.0042, dark ? 0x9dc8f7 : 0x1757ac));
+  for (let L = Math.ceil(zlo / 600) * 600; L <= zhi; L += 600) segs.push(...contour(z10, L));
+  groups.strat.add(thinLines(segs, R.strat + 0.001, dark ? 0xb9c3cc : 0x4a5560, 0.7));
   const vlat = ser("vortex_lat"), vlon = ser("vortex_lon"), pieces = ser("vortex_pieces");
   if (Number.isFinite(vlat)) {
     const m = new THREE.Mesh(new THREE.SphereGeometry(0.02, 16, 12), new THREE.MeshBasicMaterial({ color: dark ? 0x9dc8f7 : 0x0e3d7e }));
@@ -386,9 +398,9 @@ const SFC_VARS = {
   ci: { name: "해빙 농도", need: ["ci", "ci_clim"], range: "±40 %p (줄면 빨강)", vmax: 0.4, flip: true },
   snow: { name: "눈덮임 비율", need: ["snowc", "snowc_clim"], range: "±60 %p (줄면 빨강)", vmax: 0.6, flip: true },
   swvl1: { name: "토양수분 (표층 0~7 cm)", need: ["swvl1_anom"], range: "±0.08 m³/m³ (마르면 빨강)", vmax: 0.08, flip: true },
-  // 강수: 그날로 끝나는 7일 평균 강수 편차(북반구). 많으면 파랑, 적으면 빨강.
+  // 강수: 그날로 끝나는 7일 평균 강수 편차(북반구). 많으면 녹색, 적으면 갈색(기온의 빨강·파랑과 헷갈리지 않게 색표를 따로 쓴다).
   // vmax 6 mm/일: 90일 |편차|의 95백분위가 육지 4.3, 바다 8.2, 20~50°N 바다 7.0 mm/일(2026-11-21 기준)이라 그 사이로 잡았다
-  tp: { name: "강수 (7일 평균)", need: ["tp_anom"], range: "±6 mm/일 (적으면 빨강)", vmax: 6, flip: true },
+  tp: { name: "강수 (7일 평균)", need: ["tp_anom"], range: "±6 mm/일 (많으면 녹색, 적으면 갈색)", vmax: 6, color: wetDry },
 };
 let sfcVar = "t";
 const sfcOK = (k) => SFC_VARS[k].need.every(has);
@@ -401,7 +413,7 @@ function drawSfc(dark, ink, warm, cool) {
     if (has("sst_anom")) groups.sfc.add(shell(fine("sst_anom"), R.sfc + 0.001, divFn(2.5, 0.85, 0.12)));
     if (has("t2m_anom")) groups.sfc.add(shell(fine("t2m_anom"), R.sfc + 0.002, divFn(8, 0.85, 0.1)));
   } else if (sfcOK(sfcVar)) {
-    const s = SFC_VARS[sfcVar], fn = divFn(s.vmax, 0.88, 0.1);
+    const s = SFC_VARS[sfcVar], fn = divFn(s.vmax, 0.88, 0.1, s.color);
     groups.sfc.add(shell(sfcField(sfcVar), R.sfc + 0.002, s.flip ? (v) => fn(-v) : fn));
   }
   if (has("msl_anom")) {
@@ -423,18 +435,167 @@ function drawSfc(dark, ink, warm, cool) {
   label(`Niño3.4 ${V.sgn(ser("nino34"), 2, "°C")}`, xyz(0, 205, R.sfc + 0.05), "sfc");
 }
 
-// --- 극관 기둥: 층별 극관 고도 표준화 편차
-function drawColumn() {
-  const P = D.pch, nl = P.levels.length;
-  for (let l = 0; l < nl; l++) {
-    const v = P.v[T * nl + l]; if (v === null) continue;
-    const s = v * 0.1, p = P.levels[l];
-    const h = R.sfc + (Math.log(1000) - Math.log(p)) / (Math.log(1000) - Math.log(10)) * (R.strat - R.sfc);
-    const [r, g, b] = V.divColor(Math.max(-1, Math.min(1, s / 3)));
-    const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.016, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(r / 255, g / 255, b / 255), transparent: true, opacity: 0.95 }));
-    disc.position.set(0, h, 0); groups.col.add(disc);
-    if ([10, 100, 500, 1000].includes(p)) label(`${p} hPa ${V.sgn(s, 1, "σ")}`, new THREE.Vector3(0.09, h, 0), "col", null, "sm");
+// --- 극관 기둥: 층별 극관 고도 표준화 편차(원반) + 하향 전파(색 화살표) + 상향 파동(검은 화살표)
+// 하향: 성층권(100 hPa 이상)에서 |σ|가 가장 큰 층부터 같은 부호 |σ| ≥ 1이 끊기지 않고 이어지는 가장 낮은 층까지 화살표를 긋는다
+//       (5일 이동평균 값으로 판정, src/diagnose/ssw.py의 downward와 같은 문턱). 고리는 5일 전에 닿았던 깊이다.
+// 상향: 100 hPa 에디 열속 표준화 편차가 +1σ 이상인 날, 대류권에서 성층권으로 올라가는 화살표를 그린다.
+const PCH_THR = 1, WAVE_THR = 1, LAG = 5;
+const hOfP = (p) => R.sfc + (Math.log(1000) - Math.log(p)) / (Math.log(1000) - Math.log(10)) * (R.strat - R.sfc);
+const pchAt = (t, l) => { const v = t < 0 || t >= D.n ? null : D.pch.v[t * D.pch.levels.length + l]; return v === null || v === undefined ? NaN : v * 0.1; };
+function pchSm(t, l) {      // 가운데 맞춘 5일 평균 (있는 날 3일 이상)
+  let s = 0, n = 0;
+  for (let k = -2; k <= 2; k++) { const v = pchAt(t + k, l); if (Number.isFinite(v)) { s += v; n++; } }
+  return n >= 3 ? s / n : NaN;
+}
+const reachCache = new Map();
+function reach(t) {         // {s: 부호, from: 맨 위 층 번호, to: 닿은 가장 낮은 층 번호} 또는 null
+  if (t < 0 || t >= D.n) return null;
+  if (reachCache.has(t)) return reachCache.get(t);
+  const L = D.pch.levels;
+  let i0 = -1, best = PCH_THR;
+  for (let i = 0; i < L.length; i++) { if (L[i] > 100) continue; const v = Math.abs(pchSm(t, i)); if (v >= best) { best = v; i0 = i; } }
+  let out = null;
+  if (i0 >= 0) {
+    const sg = Math.sign(pchSm(t, i0)); let to = i0, from = i0;
+    while (to + 1 < L.length && sg * pchSm(t, to + 1) >= PCH_THR) to++;
+    while (from - 1 >= 0 && sg * pchSm(t, from - 1) >= PCH_THR) from--;
+    out = { s: sg, from, to };
   }
+  reachCache.set(t, out); return out;
+}
+const reachText = (r) => (D.pch.levels[r.to] >= 1000 ? "지상" : `${D.pch.levels[r.to]} hPa`);
+// 연직 화살표 (y0 -> y1). 머리 길이는 고정해 긴 화살표도 머리가 커지지 않게 한다
+function vArrow(y0, y1, mat, width) {
+  const g = new THREE.Group(), dir = Math.sign(y1 - y0), len = Math.abs(y1 - y0), hl = Math.min(0.032, len * 0.5);
+  const shaft = new THREE.Mesh(CYL, mat), head = new THREE.Mesh(CONE, mat);
+  shaft.scale.set(width, len - hl, width); shaft.position.set(0, y0 + dir * (len - hl) / 2, 0);
+  head.scale.set(width * 2.6, hl, width * 2.6); head.position.set(0, y1 - dir * hl / 2, 0);
+  if (dir < 0) head.rotation.z = Math.PI;
+  g.add(shaft, head); return g;
+}
+const colSide = { near: new THREE.Group(), far: new THREE.Group() };   // 기둥 오른쪽(화면 기준)에 두는 화살표 묶음. 위치는 loop에서 카메라에 맞춘다
+function drawColumn(dark, ink, warm, cool) {
+  const L = D.pch.levels;
+  for (let l = 0; l < L.length; l++) {
+    const sg = pchAt(T, l); if (!Number.isFinite(sg)) continue;
+    const [r, g, b] = V.divColor(Math.max(-1, Math.min(1, sg / 3)));
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.016, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(r / 255, g / 255, b / 255), transparent: true, opacity: 0.95 }));
+    disc.position.set(0, hOfP(L[l]), 0); groups.col.add(disc);
+  }
+  for (const k in colSide) { clear(colSide[k]); groups.col.add(colSide[k]); }
+  today.reach = reach(T); today.reachPrev = reach(T - LAG); today.wave = ser("vt100_z");
+  const rc = today.reach, pv = today.reachPrev;
+  if (rc && rc.to > rc.from) {
+    const css = rc.s > 0 ? warm : cool, mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(css) });
+    const y0 = hOfP(L[rc.from]) + 0.012, y1 = hOfP(L[rc.to]) - 0.004;
+    colSide.near.add(vArrow(y0, y1, mat, 0.0075));
+    let note = "";
+    if (pv && pv.s === rc.s) {
+      if (pv.to !== rc.to) {       // 5일 전 깊이 고리
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.02, 0.0035, 6, 20), mat);
+        ring.rotation.x = Math.PI / 2; ring.position.set(0, hOfP(L[pv.to]), 0); colSide.near.add(ring);
+      }
+      note = pv.to !== rc.to ? ` · ${LAG}일 전 ${reachText(pv)}` : "";
+    }
+    const deepening = !pv || pv.s !== rc.s || pv.to < rc.to;
+    const el = label(`${deepening ? "하향 전파 ↓" : "편차 깊이"} ${reachText(rc)}${note}`, new THREE.Vector3(0, y1, 0), "col", css, "sm lft bx");
+    labels[labels.length - 1].off = colSide.near; el.title = "성층권 극관 고도 편차(|σ| ≥ 1)가 끊기지 않고 이어진 가장 낮은 층";
+  }
+  if (Number.isFinite(today.wave) && today.wave >= WAVE_THR) {
+    const mat = new THREE.MeshBasicMaterial({ color: ink });
+    const y0 = hOfP(500), y1 = hOfP(30);
+    colSide.far.add(vArrow(y0, y1, mat, 0.004 + Math.min(today.wave, 4) * 0.002));
+    label(`상향 파동 ↑ ${V.sgn(today.wave, 1, "σ")}`, new THREE.Vector3(0, hOfP(50), 0), "col", null, "sm lft bx");
+    labels[labels.length - 1].off = colSide.far;
+  }
+  drawInset();
+}
+
+// --- 극관 고도 편차의 시간–고도 단면 (무대 왼쪽 아래 작은 그림). 색 띠가 오른쪽 아래로 기울면 하향 전파다.
+// 아래 띠는 100 hPa 에디 열속 표준화 편차(위로 솟으면 상향 파동이 평년보다 강함). 누르거나 끌면 그 날짜로 간다.
+const inset = { el: null, base: null, key: "" };
+const IN = { l: 34, r: 40, t: 15, strip: 16, b: 13 };     // CSS 픽셀 여백
+function insetGeom() {
+  const c = inset.el, w = c.clientWidth, h = c.clientHeight;
+  return { w, h, x0: IN.l, x1: w - IN.r, y0: IN.t, y1: h - IN.b - IN.strip - 4, sy0: h - IN.b - IN.strip, sy1: h - IN.b };
+}
+const insetTicks = (g) => (g.y1 - g.y0 < 85 ? [10, 100, 1000] : [10, 100, 500, 1000]);
+const insetX = (g, t) => g.x0 + (t + 0.5) / D.n * (g.x1 - g.x0);
+const insetY = (g, p) => g.y0 + (Math.log(p) - Math.log(10)) / (Math.log(1000) - Math.log(10)) * (g.y1 - g.y0);
+function insetBase(g, dpr, dark) {
+  const c = document.createElement("canvas"); c.width = Math.round(g.w * dpr); c.height = Math.round(g.h * dpr);
+  const x = c.getContext("2d"), L = D.pch.levels, lnL = L.map(Math.log);
+  const W = Math.round((g.x1 - g.x0) * dpr), H = Math.round((g.y1 - g.y0) * dpr), img = x.createImageData(W, H);
+  for (let j = 0; j < H; j++) {            // 세로는 로그 기압으로 층 사이를 선형 보간, 가로는 날짜 칸
+    const lp = Math.log(10) + (j + 0.5) / H * (Math.log(1000) - Math.log(10));
+    let l = 0; while (l < L.length - 2 && lnL[l + 1] < lp) l++;
+    const f = Math.max(0, Math.min(1, (lp - lnL[l]) / (lnL[l + 1] - lnL[l])));
+    for (let i = 0; i < W; i++) {
+      const t = Math.min(D.n - 1, Math.floor(i / W * D.n)), a = pchAt(t, l), b = pchAt(t, l + 1), k = (j * W + i) * 4;
+      const v = Number.isFinite(a) && Number.isFinite(b) ? a + (b - a) * f : NaN;
+      if (!Number.isFinite(v)) { img.data[k + 3] = 0; continue; }
+      const [r, gg, bb] = V.divColor(Math.max(-1, Math.min(1, v / 3)));
+      img.data[k] = r; img.data[k + 1] = gg; img.data[k + 2] = bb; img.data[k + 3] = 255;
+    }
+  }
+  x.putImageData(img, Math.round(g.x0 * dpr), Math.round(g.y0 * dpr));
+  x.scale(dpr, dpr);
+  const ink = V.css("--ink"), ink2 = V.css("--ink-2"), line = V.css("--line");
+  x.font = "10px system-ui, sans-serif"; x.textBaseline = "middle";
+  x.fillStyle = ink; x.textAlign = "left"; x.fillText("극관 고도 편차 σ · 시간–고도", 4, 7);
+  x.fillStyle = ink2; x.textAlign = "right";
+  for (const p of insetTicks(g)) x.fillText(String(p), g.x0 - 3, Math.max(g.y0 + 4, Math.min(g.y1 - 4, insetY(g, p))));
+  x.fillText("hPa", g.x0 - 3, insetY(g, 30)); 
+  x.strokeStyle = line; x.lineWidth = 1; x.strokeRect(g.x0 + 0.5, g.y0 + 0.5, g.x1 - g.x0 - 1, g.y1 - g.y0 - 1);
+  // 닿은 깊이를 날짜마다 이은 선: 오른쪽 아래로 내려가면 하향 전파
+  x.strokeStyle = ink; x.lineWidth = 1.4; x.beginPath();
+  let pen = false, prevS = 0;
+  for (let t = 0; t < D.n; t++) {
+    const r = reach(t);
+    if (!r || r.to === r.from) { pen = false; continue; }
+    const px = insetX(g, t), py = insetY(g, L[r.to]);
+    if (pen && r.s === prevS) x.lineTo(px, py); else x.moveTo(px, py);
+    pen = true; prevS = r.s;
+  }
+  x.stroke();
+  // 사건 표시 (SSW: 점선, 우랄 블로킹 시작: 작은 세모)
+  for (const m of D.marks) {
+    const t = Math.round((Date.parse(m.date + "T00:00:00Z") - Date.parse(D.start + "T00:00:00Z")) / 864e5); if (t < 0 || t >= D.n) continue;
+    const px = insetX(g, t);
+    if (m.kind === "ssw") {
+      x.strokeStyle = V.css("--s4"); x.setLineDash([3, 2]); x.beginPath(); x.moveTo(px, g.y0); x.lineTo(px, g.sy1); x.stroke(); x.setLineDash([]);
+      x.fillStyle = V.css("--s4"); x.textAlign = "center"; x.fillText("SSW", px, 7);
+    } else { x.fillStyle = V.css("--s2"); x.beginPath(); x.moveTo(px - 3, g.y0 - 1); x.lineTo(px + 3, g.y0 - 1); x.lineTo(px, g.y0 + 4); x.fill(); }
+  }
+  // 아래 띠: 100 hPa 열속 표준화 편차 (±3σ)
+  const z = D.series.vt100_z, mid = (g.sy0 + g.sy1) / 2, bw = Math.max(1, (g.x1 - g.x0) / D.n - 0.5);
+  x.fillStyle = ink2; x.textAlign = "right"; x.fillText("열속", g.x0 - 3, mid);
+  x.strokeStyle = line; x.beginPath(); x.moveTo(g.x0, mid + 0.5); x.lineTo(g.x1, mid + 0.5); x.stroke();
+  if (z) for (let t = 0; t < D.n; t++) {
+    const v = z[t]; if (v === null || !Number.isFinite(v)) continue;
+    const hh = Math.max(-1, Math.min(1, v / 3)) * (g.sy1 - g.sy0) / 2;
+    x.fillStyle = v >= WAVE_THR ? ink : ink2; x.globalAlpha = v >= WAVE_THR ? 1 : 0.55;
+    x.fillRect(insetX(g, t) - bw / 2, hh > 0 ? mid - hh : mid, bw, Math.abs(hh));
+  }
+  x.globalAlpha = 1;
+  // 달 눈금
+  x.fillStyle = ink2; x.textAlign = "center";
+  for (let t = 0; t < D.n; t++) { const d = dateOf(t); if (d.slice(8) === "01") x.fillText(`${+d.slice(5, 7)}월`, insetX(g, t), g.h - 6); }
+  return c;
+}
+function drawInset() {
+  const c = inset.el; if (!c || !c.clientWidth) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2), g = insetGeom(), dark = V.isDark(), key = `${g.w}x${g.h}:${dpr}:${dark}`;
+  if (inset.key !== key) { inset.base = insetBase(g, dpr, dark); inset.key = key; c.width = inset.base.width; c.height = inset.base.height; }
+  const x = c.getContext("2d");
+  x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, c.width, c.height); x.drawImage(inset.base, 0, 0);
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const px = insetX(g, T), ink = V.css("--ink");
+  x.strokeStyle = ink; x.lineWidth = 1.5; x.beginPath(); x.moveTo(px, g.y0 - 2); x.lineTo(px, g.sy1 + 1); x.stroke();
+  // 그날 값: 오른쪽 여백에 10·100·500·1000 hPa의 σ
+  x.font = "10px system-ui, sans-serif"; x.textBaseline = "middle"; x.textAlign = "left"; x.fillStyle = ink;
+  D.pch.levels.forEach((p, l) => { if (insetTicks(g).includes(p)) x.fillText(V.sgn(pchAt(T, l), 1), g.x1 + 4, Math.max(g.y0 + 4, Math.min(g.y1 - 4, insetY(g, p)))); });
+  if (Number.isFinite(today.wave)) x.fillText(V.sgn(today.wave, 1), g.x1 + 4, (g.sy0 + g.sy1) / 2);
 }
 
 // --- 층 이름표: 북극 위 각 층 높이에 둔다 (극 쪽 연직축은 화면에서도 세로로 보여 층 순서가 그대로 읽힌다)
@@ -443,6 +604,15 @@ function layerTags() {
   for (const k in txt) label(txt[k], new THREE.Vector3(0, R[k] + (k === "sfc" ? 0.01 : 0), 0), k, null, "tag");
 }
 
+function colText() {
+  const rc = today.reach, pv = today.reachPrev, w = today.wave, out = [];
+  if (rc && rc.to > rc.from) {
+    const deep = !pv || pv.s !== rc.s || pv.to < rc.to;
+    out.push(`${rc.s > 0 ? "+" : "−"} 편차가 ${reachText(rc)}까지${deep ? " (하향 전파 중)" : ""}`);
+  } else out.push("성층권에서 이어진 편차 없음");
+  if (Number.isFinite(w)) out.push(`상향 파동(100 hPa 열속) ${V.sgn(w, 1, "σ")}`);
+  return out.join(" · ");
+}
 function hud() {
   const d = dateOf(T), mk = D.marks.filter((m) => m.date === d).map((m) => m.label);
   const jet = today.jet ? `제트 최대 ${today.jet.v.toFixed(0)} m/s (${fmtLL(today.jet)})` : "제트 50 m/s 이상 없음";
@@ -451,6 +621,7 @@ function hud() {
     `<b>10 hPa</b> 60°N 동서풍 ${V.fmt(ser("u1060"), 1)} m/s · 극관 기온 편차 ${V.sgn(ser("t10_cap_anom"), 1, " K")}<br>` +
     `<b>250 hPa</b> ${jet}<br>` +
     `<b>500 hPa</b> 큰 편차 ${zc || "없음"}${ser("blocked") >= 1 ? " · 우랄 블로킹" : ""}<br>` +
+    `<b>극관 기둥</b> ${colText()}<br>` +
     `<b>지수</b> AO ${V.sgn(ser("ao"), 2)} · Niño3.4 ${V.sgn(ser("nino34"), 2, "°C")} · 한반도 기온 ${V.sgn(ser("korea_t"), 1, "°C")}` +
     (mk.length ? `<br><span class="ev">● ${mk.join(", ")}</span>` : "");
   $("slider").value = T;
@@ -477,24 +648,26 @@ function bar(fn, n = 40) {
   const stops = []; for (let k = 0; k <= n; k++) { const c = fn(k / n); stops.push(`${c} ${(k / n * 100).toFixed(1)}%`); }
   return `<span class="cbar" style="background:linear-gradient(90deg,${stops.join(",")})"></span>`;
 }
-const divBar = () => bar((x) => { const [r, g, b] = V.divColor(x * 2 - 1); return `rgb(${r},${g},${b})`; });
+const divBar = (colorOf = V.divColor) => bar((x) => { const [r, g, b] = colorOf(x * 2 - 1); return `rgb(${r},${g},${b})`; });
 const jetBar = () => bar((x) => cssHex(seqColor(x)));
 function keys() {
   const t10 = has("t10_anom");
   const rows = [
-    ["성층권 10 hPa", divBar(), t10 ? "−20 ~ +20 K" : "−1500 ~ +1500 m",
-      (t10 ? "면: 기온 편차(빨강 = 승온, 파랑 = 냉각). 숫자: ±8 K 넘는 승온·냉각 중심. "
-        : "면: 극소용돌이 안쪽(가장자리보다 고도가 낮은 곳, 진할수록 깊음). 기온 편차 분포는 자료 준비 중이라 극관 평균값만 숫자로 보인다. ") +
-      "가는 선: 고도 600 m 간격. <b>굵은 파란 선</b>: 극소용돌이 가장자리(그날 평년 60°N 평균 고도). 60°N 고리: 동서풍(빨강 = 동풍 역전)."],
+    ["성층권 10 hPa", divBar(), "−20 ~ +20 K",
+      (t10 ? "면: 기온 편차(빨강 = 승온, 파랑 = 냉각). 숫자: ±8 K 넘는 승온·냉각 중심. " : "기온 편차 분포는 자료 준비 중이라 극관 평균값만 숫자로 보인다. ") +
+      "가는 선: 그날 고도 등치선(600 m 간격)으로, 선이 감싼 낮은 곳이 극소용돌이다. 점: 극소용돌이 중심. 60°N 고리: 동서풍(빨강 = 동풍 역전)."],
     ["제트 250 hPa", jetBar(), `${JET_MIN} ~ ${JET_TOP}+ m/s`,
       `면: 풍속 ${JET_MIN} m/s 이상. <b>굵은 주황 선</b>: ${JET_MIN} m/s 등풍속선, 가는 보라 선: 70 m/s. 화살표: 경도 10°마다 제트 축의 바람 방향.`],
     ["500 hPa", divBar(), "−240 ~ +240 m",
       "면: 고도 편차(작은 편차는 투명, 빨강 + 파랑 −). 숫자: ±120 m 넘는 편차 중심(m). 검은 화살표: 7일 평균 파동활동 플럭스(Takaya-Nakamura, 상위 35%)."],
-    ["지상·해양", divBar(), SFC_VARS[sfcVar].range,
-      (sfcVar === "tp" ? "면: 그날로 끝나는 7일 평균 강수의 1991~2020 평년 대비 편차(mm/일, 파랑 = 많음, 빨강 = 적음). H/L:" :
+    ["지상·해양", divBar(SFC_VARS[sfcVar].color), SFC_VARS[sfcVar].range,
+      (sfcVar === "tp" ? "면: 그날로 끝나는 7일 평균 강수의 1991~2020 평년 대비 편차(mm/일, 녹색 = 많음, 갈색 = 적음). H/L:" :
         `면: ${SFC_VARS[sfcVar].name} 편차(${sfcVar === "skt" ? "1991~2020 월평균 평년을 날짜별로 보간한 값 대비" : "1991~2020 평년 대비"}). H/L:`) + ` 해면기압 편차 중심(±8 hPa 이상, hPa). ` +
         ($("mslChk").checked ? "가는 선: 해면기압 편차 8 hPa 간격(붉은 실선 +, 파란 점선 −). " : "")],
-    ["극관 기둥", divBar(), "−3 ~ +3 σ", "층별(1000~10 hPa) 극관 고도 표준화 편차. 위에서 아래로 번지면 하향 전파."],
+    ["극관 기둥", divBar(), "−3 ~ +3 σ",
+      "원반: 층별(1000~10 hPa) 극관 고도 표준화 편차. <b>색 화살표(하향)</b>: 성층권 편차(|σ| ≥ 1, 5일 평균)가 끊기지 않고 이어져 내려온 깊이. 고리는 5일 전 깊이라, 화살표 끝이 고리보다 아래면 하향 전파 중이다. " +
+      "<b>검은 화살표(상향)</b>: 100 hPa 에디 열속이 평년보다 1σ 이상 강한 날, 곧 대류권 파동이 성층권으로 올라가는 날. " +
+      "<b>왼쪽 아래 단면</b>: 가로 날짜, 세로 기압. 색 띠와 검은 선(편차가 닿은 깊이)이 오른쪽 아래로 기울면 하향 전파, 아래 띠 막대(100 hPa 열속 σ)가 솟으면 상향 파동이다. 보라 점선은 SSW 발생일, 주황 세모는 우랄 블로킹 시작일. 단면을 누르거나 끌면 그 날짜로 간다."],
   ];
   $("keys").innerHTML = rows.map(([n, b, rng, d]) => `<div class="krow"><div class="kh"><b>${n}</b>${b}<span class="small">${rng}</span></div><div class="small">${d}</div></div>`).join("");
 }
@@ -530,6 +703,8 @@ function showLayers() {
   let all = true;
   for (const b of layerBtns()) { const on = b.getAttribute("aria-pressed") === "true"; groups[b.dataset.l].visible = on; all &&= on; }
   $("allBtn").setAttribute("aria-pressed", all);
+  $("pchInset").style.display = groups.col.visible ? "block" : "none";
+  if (groups.col.visible) { inset.key = ""; drawInset(); }
 }
 function toggleLayer(b) {
   if ($("allBtn").getAttribute("aria-pressed") === "true") {
@@ -551,11 +726,14 @@ function loop(ts) {
     else T = T < lo ? lo : T + 1;
     draw();
   }
-  place(); renderer.render(scene, camera);
+  place();
+  colSide.near.position.set(-Math.sin(cam.az) * 0.085, 0, -Math.cos(cam.az) * 0.085);     // 화면 기준 기둥 오른쪽
+  colSide.far.position.set(-Math.sin(cam.az) * 0.15, 0, -Math.cos(cam.az) * 0.15);
+  renderer.render(scene, camera);
   const w = stage.clientWidth, h = stage.clientHeight, camDir = camera.position.clone().normalize();
   for (const l of labels) {
     if (!groups[l.group].visible) { l.el.style.display = "none"; continue; }
-    proj.copy(l.pos).project(camera);
+    proj.copy(l.pos); if (l.off) proj.add(l.off.position); proj.project(camera);
     const behind = l.pos.clone().normalize().dot(camDir) < -0.05 && l.pos.length() < 1.4 && l.group !== "col";
     l.el.style.display = behind || proj.z > 1 ? "none" : "block";
     l.el.style.left = (proj.x + 1) / 2 * w + "px"; l.el.style.top = (1 - proj.y) / 2 * h + "px";
@@ -600,7 +778,11 @@ function loop(ts) {
   const missing = ["t10_anom", "v250", "t2m(북반구)", "ci", "snowc", "swvl1_anom", "skt_anom", "tp_anom"].filter((k) => k === "t2m(북반구)" ? !(has("t2m_anom") && F.t2m_anom.lat0 < 10) : !has(k));
   $("notes").textContent = `자료 ${D.start} ~ ${D.end}. 높이는 과장했다(10 hPa 약 31 km를 지구 반지름의 0.32배로). 격자는 3차 보간으로 부드럽게 그렸다.` +
     (missing.length ? ` 이번 자료에 없는 항목: ${missing.join(", ")} (다음 갱신에 추가).` : "");
+  inset.el = $("pchInset");
+  const pick = (e) => { const g = insetGeom(), b = inset.el.getBoundingClientRect(); setPlay(false); T = Math.max(0, Math.min(D.n - 1, Math.floor((e.clientX - b.left - g.x0) / (g.x1 - g.x0) * D.n))); draw(); };
+  inset.el.addEventListener("pointerdown", (e) => { inset.el.setPointerCapture(e.pointerId); pick(e); });
+  inset.el.addEventListener("pointermove", (e) => { if (e.buttons & 1 || e.pointerType === "touch" && inset.el.hasPointerCapture(e.pointerId)) pick(e); });
   setTheme(document.documentElement.dataset.theme || "");
-  addEventListener("resize", resize); resize(); draw(); keys(); requestAnimationFrame(loop);
+  addEventListener("resize", () => { resize(); drawInset(); }); resize(); draw(); keys(); requestAnimationFrame(loop);
 })();
 })();

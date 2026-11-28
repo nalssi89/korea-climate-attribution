@@ -193,6 +193,18 @@ def series_anom(s: pd.Series, **kw) -> pd.Series:
     return s - series_clim(s, **kw)
 
 
+def series_std_anom(s: pd.Series, years=C.CLIM, nharm: int = 4) -> pd.Series:
+    """일별 시계열의 표준화 편차: 평년 편차를 날짜별 표준편차(평년 기간, 로그 분산을 조화 평활)로 나눈다.
+
+    계절에 따라 변동 폭이 크게 다른 양(예: 100 hPa 에디 열속)을 한 해 내내 같은 눈금(σ)으로 보려고 쓴다.
+    """
+    a = series_anom(s, years=years, nharm=nharm)
+    base = a[f"{years[0]}":f"{years[1]}"]
+    var = (base ** 2).groupby(_doy366(base.index)).mean().reindex(np.arange(1, 367)).interpolate(limit_direction="both")
+    sd = np.sqrt(np.exp(_harmonic_smooth(np.log(np.maximum(var.values.astype("float64"), 1e-12)), nharm)))
+    return a / sd[_doy366(a.index) - 1]
+
+
 def field_clim(name: str) -> xr.DataArray:
     """장의 일별 평년값(1991~2020). 한 번 계산하면 data/clim에 저장해 다시 쓴다."""
     p = C.DATA / "clim" / f"{name}.nc"
