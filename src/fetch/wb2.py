@@ -18,7 +18,8 @@ from ..common import atomic_to_netcdf, get_logger
 log = get_logger("fetch.wb2")
 WB2_SFC = {"msl": "mean_sea_level_pressure", "t2m": "2m_temperature",
            "tp": "total_precipitation_24hr", "sst": "sea_surface_temperature",
-           "ci": "sea_ice_cover", "sd": "snow_depth", "swvl1": "volumetric_soil_water_layer_1"}
+           "ci": "sea_ice_cover", "sd": "snow_depth", "swvl1": "volumetric_soil_water_layer_1",
+           "tp_nh": "total_precipitation_24hr"}      # tp_nh: 같은 강수를 북반구 전체로
 
 
 def _open(url: str) -> xr.Dataset:
@@ -40,7 +41,7 @@ def convert_units(name: str, da: xr.DataArray) -> xr.DataArray:
         return da / C.G
     if name == "msl":
         return da / 100.0
-    if name == "tp":
+    if name in C.PRECIP_FIELDS:
         return da * 1000.0
     return da
 

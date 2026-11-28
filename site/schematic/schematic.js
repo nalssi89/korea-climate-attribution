@@ -386,6 +386,9 @@ const SFC_VARS = {
   ci: { name: "해빙 농도", need: ["ci", "ci_clim"], range: "±40 %p (줄면 빨강)", vmax: 0.4, flip: true },
   snow: { name: "눈덮임 비율", need: ["snowc", "snowc_clim"], range: "±60 %p (줄면 빨강)", vmax: 0.6, flip: true },
   swvl1: { name: "토양수분 (표층 0~7 cm)", need: ["swvl1_anom"], range: "±0.08 m³/m³ (마르면 빨강)", vmax: 0.08, flip: true },
+  // 강수: 그날로 끝나는 7일 평균 강수 편차(북반구). 많으면 파랑, 적으면 빨강.
+  // vmax 6 mm/일: 90일 |편차|의 95백분위가 육지 4.3, 바다 8.2, 20~50°N 바다 7.0 mm/일(2026-11-21 기준)이라 그 사이로 잡았다
+  tp: { name: "강수 (7일 평균)", need: ["tp_anom"], range: "±6 mm/일 (적으면 빨강)", vmax: 6, flip: true },
 };
 let sfcVar = "t";
 const sfcOK = (k) => SFC_VARS[k].need.every(has);
@@ -488,7 +491,8 @@ function keys() {
     ["500 hPa", divBar(), "−240 ~ +240 m",
       "면: 고도 편차(작은 편차는 투명, 빨강 + 파랑 −). 숫자: ±120 m 넘는 편차 중심(m). 검은 화살표: 7일 평균 파동활동 플럭스(Takaya-Nakamura, 상위 35%)."],
     ["지상·해양", divBar(), SFC_VARS[sfcVar].range,
-      `면: ${SFC_VARS[sfcVar].name} 편차(${sfcVar === "skt" ? "1991~2020 월평균 평년을 날짜별로 보간한 값 대비" : "1991~2020 평년 대비"}). H/L: 해면기압 편차 중심(±8 hPa 이상, hPa). ` +
+      (sfcVar === "tp" ? "면: 그날로 끝나는 7일 평균 강수의 1991~2020 평년 대비 편차(mm/일, 파랑 = 많음, 빨강 = 적음). H/L:" :
+        `면: ${SFC_VARS[sfcVar].name} 편차(${sfcVar === "skt" ? "1991~2020 월평균 평년을 날짜별로 보간한 값 대비" : "1991~2020 평년 대비"}). H/L:`) + ` 해면기압 편차 중심(±8 hPa 이상, hPa). ` +
         ($("mslChk").checked ? "가는 선: 해면기압 편차 8 hPa 간격(붉은 실선 +, 파란 점선 −). " : "")],
     ["극관 기둥", divBar(), "−3 ~ +3 σ", "층별(1000~10 hPa) 극관 고도 표준화 편차. 위에서 아래로 번지면 하향 전파."],
   ];
@@ -593,7 +597,7 @@ function loop(ts) {
   sel.innerHTML = Object.entries(SFC_VARS).map(([k, s]) => `<option value="${k}"${sfcOK(k) || k === "t" ? "" : " disabled"}>지상: ${s.name.split(" (")[0]}${sfcOK(k) || k === "t" ? "" : " (자료 준비 중)"}</option>`).join("");
   sel.onchange = (e) => { sfcVar = e.target.value; draw(); keys(); };
   $("mslChk").onchange = () => { draw(); keys(); };
-  const missing = ["t10_anom", "v250", "t2m(북반구)", "ci", "snowc", "swvl1_anom", "skt_anom"].filter((k) => k === "t2m(북반구)" ? !(has("t2m_anom") && F.t2m_anom.lat0 < 10) : !has(k));
+  const missing = ["t10_anom", "v250", "t2m(북반구)", "ci", "snowc", "swvl1_anom", "skt_anom", "tp_anom"].filter((k) => k === "t2m(북반구)" ? !(has("t2m_anom") && F.t2m_anom.lat0 < 10) : !has(k));
   $("notes").textContent = `자료 ${D.start} ~ ${D.end}. 높이는 과장했다(10 hPa 약 31 km를 지구 반지름의 0.32배로). 격자는 3차 보간으로 부드럽게 그렸다.` +
     (missing.length ? ` 이번 자료에 없는 항목: ${missing.join(", ")} (다음 갱신에 추가).` : "");
   setTheme(document.documentElement.dataset.theme || "");

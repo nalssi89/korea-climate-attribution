@@ -34,7 +34,7 @@ KMA_HUB = "https://apihub.kma.go.kr"
 LON = np.arange(0.0, 360.0, 1.5)
 LAT_NH = np.arange(0.0, 90.1, 1.5)          # 대기장: 적도~북극
 LAT_SST = np.arange(-30.0, 90.1, 1.5)       # 해수면온도: 30°S~북극
-EA_LAT = (19.5, 55.5)                       # 동아시아 기온·강수 분석 영역 (20~55°N을 덮는 1.5° 격자). 강수는 이 영역만 저장한다
+EA_LAT = (19.5, 55.5)                       # 동아시아 기온·강수 분석 영역 (20~55°N을 덮는 1.5° 격자). 강수 tp는 이 영역만 저장한다
                                             # (2 m 기온은 강제인자 분석과 모식도를 위해 북반구 전체를 저장하고, 동아시아 지수는 이 영역을 잘라 쓴다)
 EA_LON = (99.0, 150.0)
 G = 9.80665
@@ -59,7 +59,10 @@ SFC_FIELDS = {
     "ci": "sea_ice_cover",
     # 강제인자(눈덮임, 토양수분). 눈 깊이는 물당량 m, 토양수분은 0~7 cm 층 체적함수율(m³/m³)
     "sd": "snow_depth", "swvl1": "volumetric_soil_water_layer_1",
+    # 북반구(0~90°N) 강수 mm/일: 모식도 지상 면 변수(7일 평균 강수 편차)용. 동아시아 지수가 쓰는 tp(동아시아만)와 따로 둔다
+    "tp_nh": "total_precipitation",
 }
+PRECIP_FIELDS = ("tp", "tp_nh")             # 일 누적(합)으로 만드는 장 (m → mm/일)
 # ARCO 원시 자료(2023~)에만 있는 일별 지상 장: WeatherBench2에 없어 1979년부터 이어 붙이지 못한다.
 # 모식도 '지상' 면 변수(지표기온 편차)용이다. 평년은 CDS 월평균(fetch.cds_monthly)으로 만든다(common.skt_clim).
 ARCO_ONLY_FIELDS = {"skt": "skin_temperature"}
