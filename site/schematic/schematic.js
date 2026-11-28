@@ -633,7 +633,10 @@ function hud() {
 // 재생: 구간 끝에 있거나 구간 밖이면 첫날부터, 아니면 지금 날짜부터 이어서
 function playLabel() {
   const [lo, hi] = range;
-  $("playBtn").textContent = playing ? "❚❚ 정지" : T >= hi || T < lo ? "▶ 첫날부터 재생" : "▶ 이어서 재생";
+  // 단추에는 부호만, 뜻은 title·aria-label로 (마우스를 올리거나 화면 낭독기로 읽힌다)
+  const what = playing ? "정지" : T >= hi || T < lo ? "첫날부터 재생" : "이어서 재생";
+  $("playBtn").textContent = playing ? "❚❚" : "▶";
+  $("playBtn").title = what; $("playBtn").setAttribute("aria-label", what);
   $("playBtn").setAttribute("aria-pressed", playing);
 }
 function setPlay(on) {
