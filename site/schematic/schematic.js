@@ -84,17 +84,8 @@ const seqColor = (t) => {
 };
 const smooth = (e0, e1, x) => { const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
 // 발산 색: 작은 편차는 투명하게 두어 중심이 드러나게 한다
-// 강수용 갈색–녹색 발산 색표: 적음(−) 갈색, 많음(+) 녹색, 가운데는 무채색.
-// 양쪽 대표색(밝은 테마 #a6611a·#18a070, 어두운 테마 #b97f30·#2ea877)은 적록 색각 이상 모의에서도 구분된다(OKLab ΔE 9.7, 8.2)
-const WETDRY = {
-  light: ["#5a3306", "#a6611a", "#cf9a52", "#ecd3a6", "#efefef", "#b3e3cd", "#5cc09a", "#18a070", "#0a5c3e"],
-  dark: ["#f0cf96", "#d9a253", "#b97f30", "#5e4420", "#383838", "#1c5440", "#2ea877", "#4cc492", "#a5ecc8"],
-};
-const wetDry = (t) => {      // t: -1(적음) ~ 1(많음) -> [r, g, b] 0~255
-  const pal = V.isDark() ? WETDRY.dark : WETDRY.light, f = (Math.max(-1, Math.min(1, t)) + 1) / 2 * (pal.length - 1);
-  const i = Math.min(Math.floor(f), pal.length - 2), d = f - i, a = hex(pal[i]), b = hex(pal[i + 1]);
-  return [0, 1, 2].map((k) => Math.round((a[k] + (b[k] - a[k]) * d) * 255));
-};
+// 강수 색표(적음 갈색, 많음 녹색)는 대시보드와 같은 것을 쓴다(assets/viz.js의 V.wetDry)
+const wetDry = V.wetDry;
 const divFn = (vmax, alpha, floor = 0.12, colorOf = V.divColor) => (v) => {
   if (!Number.isFinite(v)) return null;
   const t = Math.max(-1, Math.min(1, v / vmax)), [r, g, b] = colorOf(t);

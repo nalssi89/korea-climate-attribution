@@ -15,7 +15,7 @@
   <a href="schematic/" id="schemLink"><button type="button">3D 모식도</button></a>
   <button type="button" id="themeBtn" aria-label="테마 바꾸기">테마: 시스템</button>
 </div></header>
-<main class="wrap">
+<div class="toolbar"><div class="wrap">
   <div class="controls" role="group" aria-label="기간 선택">
     <div class="tabs" id="kindTabs"></div>
     <button type="button" id="prevBtn" aria-label="앞 기간">◀</button>
@@ -23,28 +23,44 @@
     <button type="button" id="nextBtn" aria-label="뒤 기간">▶</button>
     <span class="pill" id="periodState"></span>
   </div>
+  <nav class="toc" aria-label="목차">
+    <a href="#sumSec">요약</a><a href="#tsSec">시계열</a><a href="#attrSec">기여도</a><a href="#nhSec">북반구 편차장</a>
+    <a href="#eaSec">동아시아 지도</a><a href="#sswSec">성층권 돌연승온</a><a href="#forcingSec">강제인자</a><a href="#methodSec">방법</a>
+  </nav>
+</div></div>
+<main class="wrap">
 
-  <section>
-    <h2>요약 <span class="small">(문장은 모두 수치에서 규칙으로 만든다)</span></h2>
+  <section id="sumSec">
+    <div class="sec-head"><h2>요약</h2><p class="small">선택한 기간의 영역별 기온 편차와 강수 평년비(녹색 많음, 갈색 적음). 문장은 모두 수치에서 규칙으로 만든다.</p></div>
     <div class="tiles" id="tiles"></div>
-    <div class="card" style="margin-top:12px"><ul class="sent" id="sentences"></ul></div>
+    <div class="card" style="margin-top:12px"><ul class="sent" id="sentences"></ul>
+      <details class="more"><summary id="regSentSum">영역별 문장</summary><ul class="sent" id="regSentences"></ul></details></div>
   </section>
 
-  <section>
-    <h2>인자별 기여도</h2>
+  <section id="tsSec">
+    <div class="sec-head"><h2>일별 시계열</h2>
+      <p class="small">회색 띠: 선택한 기간 · 주황 띠: 5일 이상 우랄블로킹 · 보라 점선: 성층권 돌연승온. 그림 위에 마우스를 올리면 모든 그림이 같은 날짜를 가리킨다.</p></div>
+    <h3>동아시아·한반도</h3>
+    <div class="charts" id="tsImpact"></div>
+    <h3>북반구 원인 인자</h3>
+    <div class="charts" id="tsCause"></div>
+  </section>
+
+  <section id="attrSec">
+    <div class="sec-head"><h2>인자별 기여도</h2><p class="small">과거 통계 관계(표준화 다중회귀)에 이번 기간 지수값을 넣어 나눈 몫.</p></div>
     <div class="row">
       <select id="regionSel" aria-label="영역"></select>
       <div class="tabs" id="varTabs"><button type="button" data-v="t" class="on">기온</button><button type="button" data-v="p">강수</button></div>
     </div>
     <div class="grid2" style="margin-top:10px">
-      <div class="card"><div class="chart" id="barChart"></div><p class="small" id="barNote"></p></div>
+      <div class="card"><div id="barChart"></div><p class="small" id="barNote"></p></div>
       <div class="card"><h3 style="margin-top:0">기간 단위별 설명력 (교차검증 R²)</h3><div class="tw" id="r2Table"></div>
         <p class="small">단위마다 가장 최근 기간의 값. 같은 날짜·같은 길이 창으로 1979년 이후 해마다 학습하고, 해 단위로 빼서 예측한다. 기간이 짧을수록 내부 변동이 커서 설명력이 낮다.</p></div>
     </div>
   </section>
 
-  <section>
-    <h2>북반구 편차장</h2>
+  <section id="nhSec">
+    <div class="sec-head"><h2>북반구 편차장</h2><p class="small">기간 평균 편차(극투영)와 주요 지수.</p></div>
     <div class="tabs" id="nhTabs"></div>
     <div class="grid2" style="margin-top:10px">
       <div class="card mapbox"><canvas id="nhMap" width="600" height="600" aria-label="북반구 극투영 편차 지도"></canvas><div class="tip" id="nhTip"></div>
@@ -55,8 +71,8 @@
     </div>
   </section>
 
-  <section>
-    <h2>동아시아 기온·강수와 인자별 기여 지도</h2>
+  <section id="eaSec">
+    <div class="sec-head"><h2>동아시아 기온·강수 지도</h2><p class="small">관측 편차, 인자별 기여, 잔차를 격자마다 본다.</p></div>
     <div class="row">
       <div class="tabs" id="eaVarTabs"><button type="button" data-v="t2m" class="on">기온</button><button type="button" data-v="tp">강수</button></div>
       <select id="eaLayerSel" aria-label="지도 층"></select>
@@ -69,27 +85,25 @@
     </div>
   </section>
 
-  <section>
-    <h2>일별 지수와 사건</h2>
-    <p class="small">회색 띠: 선택한 기간 · 주황 띠: 5일 이상 우랄블로킹 · 보라 띠·점선: 성층권 돌연승온</p>
-    <div class="grid2" id="tsGrid"></div>
-  </section>
 
   <section id="sswSec">
     <h2 id="sswTitle">성층권 돌연승온</h2>
     <div class="card"><ul class="sent" id="sswSent"></ul></div>
-    <div class="grid2" style="margin-top:12px" id="sswCharts"></div>
+    <div class="charts" style="margin-top:12px" id="sswCharts"></div>
     <div class="card mapbox" style="margin-top:12px"><h3 style="margin-top:0">극관(65°N 이북) 고도 표준화 편차 · 연직-시간 단면</h3>
       <canvas id="pchCanvas" aria-label="극관 고도 편차 단면"></canvas><div class="tip" id="pchTip"></div>
       <div class="legend" id="pchLegend"></div><p class="small">양(+)은 극소용돌이가 약함(고도 높음). 성층권의 양의 편차가 아래로 내려오면 하향 전파.</p></div>
-    <div class="grid2" style="margin-top:12px" id="sswHist"></div>
+    <h3 id="sswHistTitle" hidden>과거 이른 겨울 사례와 비교</h3>
+    <div class="charts" id="sswHist"></div>
   </section>
 
   <section id="forcingSec">
-    <h2>강제인자 <span class="small">(해빙·해수면온도·눈덮임·지면온도·토양수분)</span></h2>
-    <div class="card"><ul class="sent" id="fcSent"></ul></div>
+    <div class="sec-head"><h2>강제인자</h2><p class="small">해빙·해수면온도·눈덮임·지면온도·토양수분의 현재 편차와 과거 시차 상관.</p></div>
+    <div class="card"><ul class="sent" id="fcSent"></ul>
+      <details class="more"><summary id="fcMoreSum">자세한 문장</summary><ul class="sent" id="fcMore"></ul></details></div>
     <h3>현재 편차</h3>
-    <div class="card"><ul class="sent" id="fcState"></ul><div class="tw" style="margin-top:10px" id="fcTable"></div><p class="small" id="fcTableNote"></p></div>
+    <div class="card"><div class="tw" id="fcTable"></div><p class="small" id="fcTableNote"></p>
+      <details class="more"><summary id="fcStateSum">지수별 문장</summary><ul class="sent" id="fcState"></ul></details></div>
     <h3>과거 시차 상관과 편차 지도</h3>
     <div class="row">
       <select id="fcTarget" aria-label="상관 대상"></select>
@@ -97,14 +111,14 @@
       <div class="tabs" id="fcLag"></div>
     </div>
     <div class="grid2" style="margin-top:10px">
-      <div class="card"><div class="chart" id="fcBars"></div><p class="small" id="fcBarNote"></p></div>
+      <div class="card"><div id="fcBars"></div><p class="small" id="fcBarNote"></p></div>
       <div class="card mapbox"><div class="tabs" id="fcMapTabs" style="margin-bottom:8px"></div>
         <canvas id="fcMap" width="600" height="600" aria-label="강제인자 편차 지도(극투영)"></canvas><div class="tip" id="fcTip"></div>
         <div class="legend" id="fcLegend"></div><p class="small" id="fcMapNote"></p></div>
     </div>
   </section>
 
-  <section>
+  <section id="methodSec">
     <h2>방법과 한계</h2>
     <div class="card small" id="methods"></div>
   </section>

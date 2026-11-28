@@ -79,15 +79,21 @@ function renderMap() {
 function render() {
   const F = S.F;
   const s = F.sentences;
-  $("fcSent").innerHTML = [s.overview, ...s.lag.filter((x) => /한반도|동아시아/.test(x)), ...s.regression, ...s.implication].map((x) => `<li>${x}</li>`).join("");
+  // 첫 문장(개요)만 펼쳐 두고, 시차 상관·회귀·해석 문장은 접는다. 지수별 현재 편차 문장은 표와 같은 수치라 표 아래에 접는다
+  const more = [...s.lag.filter((x) => /한반도|동아시아/.test(x)), ...s.regression, ...s.implication];
+  $("fcSent").innerHTML = `<li>${s.overview}</li>`;
+  $("fcMore").innerHTML = more.map((x) => `<li>${x}</li>`).join("");
+  $("fcMoreSum").textContent = `시차 상관·회귀·해석 문장 ${more.length}개 보기`;
   $("fcState").innerHTML = s.state.map((x) => `<li>${x}</li>`).join("");
+  $("fcStateSum").textContent = `지수별 문장 ${s.state.length}개 보기`;
   renderTable(); renderControls(); renderBars(); renderMap();
 }
 
 $("fcTarget").onchange = (e) => { S.target = e.target.value; renderBars(); };
 new MutationObserver(() => S.F && renderMap()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => S.F && renderMap());
-let rt = null; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => S.F && renderMap(), 200); });
+let rt = null, lastW = innerWidth;
+addEventListener("resize", () => { if (innerWidth === lastW) return; lastW = innerWidth; clearTimeout(rt); rt = setTimeout(() => S.F && (renderMap(), renderBars()), 200); });
 
 (async () => {
   try { [S.F, S.coast] = await Promise.all([getJSON("data/forcing.json"), getJSON("data/coast.json")]); }

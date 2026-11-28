@@ -51,6 +51,16 @@ V.divColor = (t, reverse = false) => {      // t: -1 ~ 1
   const a = hex(pal[i]), b = hex(pal[i + 1]);
   return [0, 1, 2].map((k) => Math.round(a[k] + (b[k] - a[k]) * d));
 };
+// 강수 색표: 적음(−) 갈색, 많음(+) 녹색, 가운데 무채색. 모식도와 대시보드가 함께 쓴다.
+// 양쪽 대표색(밝은 #a6611a·#18a070, 어두운 #b97f30·#2ea877)은 적록 색각 이상 모의에서도 구분된다(OKLab ΔE 9.7, 8.2)
+const WETDRY_LIGHT = ["#5a3306", "#a6611a", "#cf9a52", "#ecd3a6", "#efefef", "#b3e3cd", "#5cc09a", "#18a070", "#0a5c3e"];
+const WETDRY_DARK = ["#f0cf96", "#d9a253", "#b97f30", "#5e4420", "#383838", "#1c5440", "#2ea877", "#4cc492", "#a5ecc8"];
+V.wetDry = (t) => {      // t: -1(적음) ~ 1(많음) -> [r, g, b] 0~255
+  const pal = V.isDark() ? WETDRY_DARK : WETDRY_LIGHT;
+  const f = (Math.max(-1, Math.min(1, t)) + 1) / 2 * (pal.length - 1), i = Math.min(Math.floor(f), pal.length - 2), d = f - i;
+  const a = hex(pal[i]), b = hex(pal[i + 1]);
+  return [0, 1, 2].map((k) => Math.round(a[k] + (b[k] - a[k]) * d));
+};
 // 값 범위에 맞춰 0을 가운데 둔 대칭 한계를 고른다 (99.5 백분위)
 V.niceMax = (arr) => {
   const v = Array.from(arr).filter((x) => Number.isFinite(x)).map(Math.abs).sort((a, b) => a - b);
@@ -60,13 +70,13 @@ V.niceMax = (arr) => {
   for (const s of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (s * p >= m) return s * p;
   return 10 * p;
 };
-V.legend = (el, vmax, unit, reverse = false, steps = 9) => {
+V.legend = (el, vmax, unit, reverse = false, steps = 9, colorOf = null) => {
   el.innerHTML = "";
   const c = document.createElement("canvas"); c.width = 220; c.height = 12;
   const ctx = c.getContext("2d");
   for (let x = 0; x < 220; x++) {
     const t = Math.round(((x / 219) * 2 - 1) * (steps - 1) / 2) / ((steps - 1) / 2);
-    const [r, g, b] = V.divColor(t, reverse); ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(x, 0, 1, 12);
+    const [r, g, b] = colorOf ? colorOf(t) : V.divColor(t, reverse); ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(x, 0, 1, 12);
   }
   const lo = document.createElement("span"), hi = document.createElement("span");
   lo.textContent = `−${V.fmt(vmax)}`; hi.textContent = `+${V.fmt(vmax)} ${unit}`;
@@ -110,7 +120,7 @@ V.rect = (box) => {   // box = [남, 북, 서, 동]
 };
 
 V.drawMap = (canvas, opt) => {
-  // opt: {grid, proj, vmax, reverse, coast, arrows, unit, box, wrap, label, marker}
+  // opt: {grid, proj, vmax, reverse, colorOf(색표 함수, 기본 V.divColor), coast, arrows, unit, box, wrap, label, marker}
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const cssW = canvas.clientWidth || 360;
   const W = Math.round(cssW * dpr), H = Math.round((opt.proj.circle ? cssW : cssW * opt.proj.aspect) * dpr);
@@ -124,7 +134,7 @@ V.drawMap = (canvas, opt) => {
     let col = null;
     if (ll) {
       const v = V.sample(opt.grid, ll[0], ll[1], opt.wrap !== false);
-      col = Number.isFinite(v) ? V.divColor(Math.round(v / opt.vmax * 4) / 4, opt.reverse) : (V.isDark() ? [44, 44, 44] : [230, 230, 228]);
+      col = Number.isFinite(v) ? (opt.colorOf || V.divColor)(Math.round(v / opt.vmax * 4) / 4, opt.reverse) : (V.isDark() ? [44, 44, 44] : [230, 230, 228]);
     }
     for (let yy = y; yy < Math.min(y + step, H); yy++) for (let xx = x; xx < Math.min(x + step, W); xx++) {
       const k = (yy * W + xx) * 4, c = col || bg;
@@ -231,106 +241,160 @@ V.ticks = (lo, hi, n = 4) => {
   return out;
 };
 
-// 시계열: series = [{name, values, color, dash}], dates = ISO 문자열 배열, bands = [{start,end,kind}]
+// 눈금 간격에 맞춘 소수 자리 (20, 0.5, 0.25 → 0, 1, 2자리)
+V.tickFmt = (ticks) => { const st = ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1; const nd = st >= 1 ? 0 : st >= 0.1 ? 1 : 2;
+  return (t) => (t === 0 ? "0" : (t < 0 ? "−" : "") + Math.abs(t).toFixed(nd)); };
+
+// 시계열: 실제 화면 폭(px)으로 그려 글자가 줄어들지 않게 한다. 다시 그리려면 같은 상자로 다시 부른다(창 크기가 바뀔 때).
+// o = {title, unit, dates(ISO 문자열 또는 눈금 문자열), series: [{name, values, color, dash, width}],
+//      area: {lo, hi, name}(범위 띠), bands: [{start, end, kind}], marks: [{date, label}], nd, zero, height, xticks, group}
+// 같은 group의 그림은 마우스를 올린 날짜의 십자선·점·범례 값을 함께 보인다.
+V._groups = {};
 V.lineChart = (box, o) => {
-  box.innerHTML = "";
-  const W = 640, H = o.height || 170, m = { l: 44, r: 12, t: 22, b: 22 };
-  const svg = V.el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.title });
-  box.appendChild(svg);
-  const n = o.dates.length;
+  box.innerHTML = ""; box.classList.add("lc");
+  const head = document.createElement("div"); head.className = "lc-head";
+  const tr = document.createElement("div"); tr.className = "lc-tr"; head.appendChild(tr);
+  const ttl = document.createElement("h3"); ttl.className = "lc-title"; ttl.textContent = o.title; tr.appendChild(ttl);
+  const lg = document.createElement("div"); lg.className = "lc-legend"; head.appendChild(lg);
+  const plot = document.createElement("div"); plot.className = "lc-plot";
+  box.append(head, plot);
+  const W = Math.max(260, Math.round(plot.clientWidth || 600)), H = o.height || 196, m = { l: 42, r: 10, t: 18, b: 24 };
+  const svg = V.el("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.title }); plot.appendChild(svg);
+  const n = o.dates.length, named = o.series.filter((x) => x.name);
   let lo = Infinity, hi = -Infinity;
-  for (const s of o.series) for (const v of s.values) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  const scan = (arr) => { for (const v of arr || []) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } };
+  for (const x of o.series) scan(x.values);
+  if (o.area) { scan(o.area.lo); scan(o.area.hi); }
   if (o.zero !== false) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
   if (!Number.isFinite(lo)) { lo = -1; hi = 1; }
-  const pad = (hi - lo) * 0.08 || 1; lo -= pad; hi += pad;
+  const pad = (hi - lo) * 0.06 || 1; lo -= pad; hi += pad;
   const X = (i) => m.l + (i / Math.max(n - 1, 1)) * (W - m.l - m.r), Y = (v) => m.t + (hi - v) / (hi - lo) * (H - m.t - m.b);
-  const di = (d) => o.dates.indexOf(d);
+  const di = (d) => o.dates.indexOf(d), y0 = m.t, y1 = H - m.b;
+  // 사건·선택 기간 띠 (이름은 띠 아래쪽 안에)
+  const BAND_TXT = { sel: "선택 기간", block: "블로킹" };
   for (const b of o.bands || []) {
     let a = di(b.start), e = di(b.end); if (a < 0 && b.start < o.dates[0]) a = 0; if (e < 0 && b.end > o.dates[n - 1]) e = n - 1;
     if (a < 0 || e < 0) continue;
-    V.el("rect", { x: X(a) - 2, y: m.t, width: Math.max(X(e) - X(a) + 4, 3), height: H - m.t - m.b,
-      fill: `var(--band-${b.kind})` }, svg);
+    const bx = X(a) - 1.5, bw = Math.max(X(e) - X(a) + 3, 3);
+    V.el("rect", { x: bx, y: y0, width: bw, height: y1 - y0, fill: `var(--band-${b.kind})` }, svg);
+    // 이름은 그림 위 여백에 (선과 겹치지 않게). 띠가 좁으면 생략하고 절 설명문에 맡긴다
+    if (BAND_TXT[b.kind] && bw > 24) V.el("text", { x: bx + 2, y: y0 - 4, class: "lc-band" }, svg).textContent = BAND_TXT[b.kind];
   }
-  for (const t of V.ticks(lo, hi, 4)) {
-    V.el("line", { x1: m.l, x2: W - m.r, y1: Y(t), y2: Y(t), stroke: t === 0 ? "var(--ink-3)" : "var(--grid)", "stroke-width": 1 }, svg);
-    V.el("text", { x: m.l - 6, y: Y(t) + 4, "text-anchor": "end" }, svg).textContent = V.fmt(t);
+  // 가로 눈금
+  const yt = V.ticks(lo, hi, 4), yf = V.tickFmt(yt);
+  for (const t of yt) {
+    V.el("line", { x1: m.l, x2: W - m.r, y1: Y(t), y2: Y(t), class: t === 0 ? "lc-zero" : "lc-grid" }, svg);
+    V.el("text", { x: m.l - 6, y: Y(t) + 4, "text-anchor": "end", class: "lc-tick" }, svg).textContent = yf(t);
   }
-  if (o.xticks) for (const d of o.xticks) { const i = di(d); if (i >= 0) V.el("text", { x: X(i), y: H - 6, "text-anchor": "middle" }, svg).textContent = d; }
-  else for (let i = 0; i < n; i++) {
-    const d = o.dates[i];
-    if (d.endsWith("-01")) {
-      V.el("text", { x: X(i), y: H - 6, "text-anchor": "middle" }, svg).textContent = `${+d.slice(5, 7)}월`;
-    }
+  // 세로 눈금: 달 첫날(또는 지정 눈금)
+  if (o.xticks) for (const d of o.xticks) { const i = di(d); if (i < 0) continue;
+    V.el("line", { x1: X(i), x2: X(i), y1: y0, y2: y1, class: "lc-grid" }, svg);
+    V.el("text", { x: X(i), y: H - 6, "text-anchor": "middle", class: "lc-tick" }, svg).textContent = d; }
+  else for (let i = 0; i < n; i++) { const d = o.dates[i]; if (!d.endsWith("-01")) continue;
+    V.el("line", { x1: X(i), x2: X(i), y1: y0, y2: y1, class: "lc-grid" }, svg);
+    V.el("text", { x: X(i) + 3, y: H - 6, class: "lc-tick" }, svg).textContent = `${+d.slice(5, 7)}월`; }
+  // 범위 띠 (예: 과거 사례 5~95%)
+  if (o.area) {
+    let d = "", up = [], dn = [];
+    for (let i = 0; i < n; i++) if (Number.isFinite(o.area.lo[i]) && Number.isFinite(o.area.hi[i])) { up.push([X(i), Y(o.area.hi[i])]); dn.push([X(i), Y(o.area.lo[i])]); }
+    if (up.length) { d = "M" + up.map((p) => p.join(" ")).join("L") + "L" + dn.reverse().map((p) => p.join(" ")).join("L") + "Z";
+      V.el("path", { d, class: "lc-area" }, svg); }
   }
   for (const mk of o.marks || []) {
     const i = di(mk.date); if (i < 0) continue;
-    V.el("line", { x1: X(i), x2: X(i), y1: m.t, y2: H - m.b, stroke: "var(--ink)", "stroke-dasharray": "3 3", "stroke-width": 1 }, svg);
-    V.el("text", { x: X(i) + 3, y: m.t + 9, "font-size": 10 }, svg).textContent = mk.label;
+    V.el("line", { x1: X(i), x2: X(i), y1: y0, y2: y1, class: "lc-mark" }, svg);
+    V.el("text", { x: X(i) + 4, y: y0 + 10, class: "lc-marktxt" }, svg).textContent = mk.label;
   }
-  for (const s of o.series) {
+  for (const x of o.series) {
     let d = "", pen = false;
-    s.values.forEach((v, i) => { if (Number.isFinite(v)) { d += (pen ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1); pen = true; } else pen = false; });
-    V.el("path", { d, fill: "none", stroke: s.color, "stroke-width": s.width || 2, "stroke-dasharray": s.dash || "", "stroke-linejoin": "round" }, svg);
+    x.values.forEach((v, i) => { if (Number.isFinite(v)) { d += (pen ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1); pen = true; } else pen = false; });
+    V.el("path", { d, fill: "none", stroke: x.color, "stroke-width": x.width || 1.8, "stroke-dasharray": x.dash || "", "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
   }
-  V.el("text", { x: m.l, y: 13, class: "t-title" }, svg).textContent = o.title;
-  if (o.series.filter((s) => s.name).length > 1) {
-    let x = W - m.r;
-    [...o.series].filter((s) => s.name).reverse().forEach((s) => {
-      const t = V.el("text", { x, y: 13, "text-anchor": "end" }, svg); t.textContent = s.name;
-      const w = s.name.length * 10 + 8; x -= w;
-      V.el("line", { x1: x - 14, x2: x - 2, y1: 9, y2: 9, stroke: s.color, "stroke-width": 2, "stroke-dasharray": s.dash || "" }, svg);
-      x -= 22;
-    });
-  }
-  // 십자선과 값 표시
-  const cross = V.el("line", { y1: m.t, y2: H - m.b, stroke: "var(--ink-3)", "stroke-width": 1, visibility: "hidden" }, svg);
-  const tip = document.createElement("div"); tip.className = "tip"; box.appendChild(tip);
-  const hit = V.el("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent" }, svg);
-  hit.addEventListener("pointermove", (ev) => {
-    const r = svg.getBoundingClientRect(), sx = (ev.clientX - r.left) / r.width * W;
-    const i = Math.max(0, Math.min(n - 1, Math.round((sx - m.l) / (W - m.l - m.r) * (n - 1))));
-    cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("visibility", "visible");
-    tip.innerHTML = `<b>${o.dates[i]}</b><br>` + o.series.filter((s) => s.name).map((s) => `${s.name}: ${V.fmt(s.values[i], o.nd)}${o.unit ? " " + o.unit : ""}`).join("<br>");
-    tip.style.display = "block";
-    const px = (X(i) / W) * r.width;
-    tip.style.left = Math.min(px + 10, r.width - tip.offsetWidth - 2) + "px"; tip.style.top = "18px";
+  // 범례: 선 모양 + 이름 + 그날 값 (기본은 마지막 값). 색만으로 계열을 가리지 않게 값을 글자로 둔다
+  const fmt = (v) => (Number.isFinite(v) ? V.sgn(v, o.nd ?? (Math.abs(v) >= 100 ? 0 : Math.abs(v) >= 10 ? 1 : 2)) : "–");
+  const keys = named.map((x) => {
+    const k = document.createElement("span"); k.className = "lc-key";
+    k.innerHTML = `<svg width="18" height="10" aria-hidden="true"><line x1="1" x2="17" y1="5" y2="5" stroke="${x.color}" stroke-width="${x.width ? Math.max(2, x.width) : 2.4}" stroke-dasharray="${x.dash || ""}" stroke-linecap="round"/></svg>${x.name} <b></b>`;
+    lg.appendChild(k); return k.querySelector("b");
   });
-  hit.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); tip.style.display = "none"; });
+  if (o.area && o.area.name) { const k = document.createElement("span"); k.className = "lc-key"; k.innerHTML = `<i class="lc-areakey"></i>${o.area.name}`; lg.appendChild(k); }
+  const dateEl = document.createElement("span"); dateEl.className = "lc-date"; tr.appendChild(dateEl);
+  // 기본으로 보이는 날: 모든 계열에 값이 있는 마지막 날(없으면 어느 하나라도 있는 마지막 날)
+  const lastBy = (f) => { for (let i = n - 1; i >= 0; i--) if (f(i)) return i; return -1; };
+  let lastIdx = lastBy((i) => named.every((x) => Number.isFinite(x.values[i])));
+  if (lastIdx < 0) lastIdx = Math.max(0, lastBy((i) => named.some((x) => Number.isFinite(x.values[i]))));
+  const setKeys = (i) => { named.forEach((x, k) => (keys[k].textContent = fmt(x.values[i]) + (o.unit && Number.isFinite(x.values[i]) ? " " + o.unit : "")));
+    dateEl.textContent = o.xticks ? `${o.dates[i]}일` : o.dates[i]; };
+  setKeys(lastIdx);
+  // 십자선, 점, 풍선 도움말
+  const cross = V.el("line", { y1: y0, y2: y1, class: "lc-cross", visibility: "hidden" }, svg);
+  const dots = named.map((x) => V.el("circle", { r: 3.5, fill: x.color, class: "lc-dot", visibility: "hidden" }, svg));
+  const tip = document.createElement("div"); tip.className = "tip"; plot.appendChild(tip);
+  const show = (d, withTip) => {
+    const i = di(d);
+    if (i < 0) { hide(); return; }
+    cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("visibility", "visible");
+    named.forEach((x, k) => { const v = x.values[i]; if (Number.isFinite(v)) { dots[k].setAttribute("cx", X(i)); dots[k].setAttribute("cy", Y(v)); dots[k].setAttribute("visibility", "visible"); } else dots[k].setAttribute("visibility", "hidden"); });
+    setKeys(i);
+    if (withTip) {
+      tip.innerHTML = `<b>${o.xticks ? "발생 후 " + o.dates[i] + "일" : o.dates[i]}</b><br>` + named.map((x) => `<span class="sw" style="background:${x.color}"></span>${x.name} ${fmt(x.values[i])}${o.unit ? " " + o.unit : ""}`).join("<br>");
+      tip.style.display = "block";
+      const left = X(i) + 12 + tip.offsetWidth > W ? X(i) - 12 - tip.offsetWidth : X(i) + 12;
+      tip.style.left = Math.max(0, left) + "px"; tip.style.top = "6px";
+    } else tip.style.display = "none";
+  };
+  const hide = () => { cross.setAttribute("visibility", "hidden"); dots.forEach((c) => c.setAttribute("visibility", "hidden")); tip.style.display = "none"; setKeys(lastIdx); };
+  box._lc = { show, hide };
+  const peers = () => { const g = o.group ? (V._groups[o.group] = (V._groups[o.group] || []).filter((b) => b.isConnected)) : [box]; return g; };
+  if (o.group) { V._groups[o.group] = (V._groups[o.group] || []).filter((b) => b.isConnected && b !== box); V._groups[o.group].push(box); }
+  const hit = V.el("rect", { x: m.l, y: y0, width: W - m.l - m.r, height: y1 - y0, fill: "transparent", class: "lc-hit" }, svg);
+  hit.addEventListener("pointermove", (ev) => {
+    const r = svg.getBoundingClientRect(), i = Math.max(0, Math.min(n - 1, Math.round((ev.clientX - r.left - m.l) / (W - m.l - m.r) * (n - 1))));
+    for (const b of peers()) b._lc && b._lc.show(o.dates[i], b === box);
+  });
+  hit.addEventListener("pointerleave", () => { for (const b of peers()) b._lc && b._lc.hide(); });
 };
 
-// 가로 막대 (기여도): rows = [{label, value, lo, hi, kind}]
+// 가로 막대 (기여도·상관): rows = [{label, value, lo, hi, kind, faded, note}]. 실제 화면 폭(px)으로 그린다.
+// 좁은 화면(480 px 미만)에서는 이름을 막대 위 줄에 둔다.
 V.barChart = (box, rows, o) => {
-  box.innerHTML = "";
-  const rowH = 26, W = 640, m = { l: o.ml || 150, r: 64, t: 24, b: 20 }, H = m.t + m.b + rows.length * rowH;
-  const svg = V.el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.title }); box.appendChild(svg);
+  box.innerHTML = ""; box.classList.add("lc");
+  const ttl = document.createElement("h3"); ttl.className = "lc-title"; ttl.textContent = o.title;
+  const plot = document.createElement("div"); plot.className = "lc-plot"; box.append(ttl, plot);
+  const W = Math.max(260, Math.round(plot.clientWidth || 600)), narrow = W < 480;
+  const rowH = narrow ? 42 : 28, m = { l: narrow ? 6 : Math.min(o.ml || 150, W * 0.4), r: 52, t: 6, b: 22 }, H = m.t + m.b + rows.length * rowH;
+  const svg = V.el("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.title }); plot.appendChild(svg);
   let lo = 0, hi = 0;
   for (const r of rows) for (const v of [r.value, r.lo, r.hi]) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
   const pad = (hi - lo) * 0.06 || 0.1; lo -= pad; hi += pad;
   const X = (v) => m.l + (v - lo) / (hi - lo) * (W - m.l - m.r);
-  for (const t of V.ticks(lo, hi, 5)) {
-    V.el("line", { x1: X(t), x2: X(t), y1: m.t, y2: H - m.b, stroke: t === 0 ? "var(--ink-3)" : "var(--grid)" }, svg);
-    V.el("text", { x: X(t), y: H - 5, "text-anchor": "middle" }, svg).textContent = V.fmt(t);
+  const xt = V.ticks(lo, hi, narrow ? 4 : 5), xf = V.tickFmt(xt);
+  for (const t of xt) {
+    V.el("line", { x1: X(t), x2: X(t), y1: m.t, y2: H - m.b, class: t === 0 ? "lc-zero" : "lc-grid" }, svg);
+    V.el("text", { x: X(t), y: H - 6, "text-anchor": "middle", class: "lc-tick" }, svg).textContent = xf(t);
   }
-  const tip = document.createElement("div"); tip.className = "tip"; box.appendChild(tip);
+  const tip = document.createElement("div"); tip.className = "tip"; plot.appendChild(tip);
   rows.forEach((r, i) => {
-    const y = m.t + i * rowH + 5, h = rowH - 10;
-    V.el("text", { x: m.l - 8, y: y + h - 3, "text-anchor": "end", fill: "var(--ink)" }, svg).textContent = r.label;
+    const top = m.t + i * rowH, h = 14, y = narrow ? top + 22 : top + (rowH - h) / 2;
+    if (narrow) V.el("text", { x: m.l, y: top + 14, class: "lc-lab" }, svg).textContent = r.label;
+    else V.el("text", { x: m.l - 8, y: y + h - 2, "text-anchor": "end", class: "lc-lab" }, svg).textContent = r.label;
     const col = r.kind === "resid" ? "var(--ink-3)" : r.kind === "obs" ? "var(--ink)" : r.value >= 0 ? "var(--warm)" : "var(--cool)";
     const x0 = X(Math.min(0, r.value)), w = Math.max(Math.abs(X(r.value) - X(0)), 1.5);
-    const bar = V.el("rect", { x: x0, y, width: w, height: h, rx: 3, fill: col, opacity: r.faded ? 0.45 : 1 }, svg);
+    const bar = V.el("rect", { x: x0, y, width: w, height: h, rx: 3, fill: col, opacity: r.faded ? 0.4 : 1 }, svg);
     if (Number.isFinite(r.lo)) {
-      V.el("line", { x1: X(r.lo), x2: X(r.hi), y1: y + h / 2, y2: y + h / 2, stroke: "var(--ink)", "stroke-width": 1.4 }, svg);
-      for (const v of [r.lo, r.hi]) V.el("line", { x1: X(v), x2: X(v), y1: y + 3, y2: y + h - 3, stroke: "var(--ink)", "stroke-width": 1.4 }, svg);
+      V.el("line", { x1: X(r.lo), x2: X(r.hi), y1: y + h / 2, y2: y + h / 2, class: "lc-ci" }, svg);
+      for (const v of [r.lo, r.hi]) V.el("line", { x1: X(v), x2: X(v), y1: y + 2, y2: y + h - 2, class: "lc-ci" }, svg);
     }
-    V.el("text", { x: Math.max(X(r.value), X(0), Number.isFinite(r.hi) ? X(r.hi) : 0) + 6, y: y + h - 3, fill: "var(--ink)" }, svg).textContent = V.sgn(r.value, 2);
-    const show = (ev) => {
-      const b = svg.getBoundingClientRect();
-      tip.innerHTML = `<b>${r.label}</b><br>${V.sgn(r.value, 2)} ${o.unit}` + (Number.isFinite(r.lo) ? `<br>5~95%: ${V.sgn(r.lo, 2)} ~ ${V.sgn(r.hi, 2)}` : "") + (r.note ? `<br>${r.note}` : "");
-      tip.style.display = "block"; tip.style.left = Math.min(ev.clientX - b.left + 10, b.width - tip.offsetWidth - 2) + "px"; tip.style.top = (y / H) * b.height + 18 + "px";
+    V.el("text", { x: Math.max(X(r.value), X(0), Number.isFinite(r.hi) ? X(r.hi) : 0) + 6, y: y + h - 2, class: "lc-val" }, svg).textContent = V.sgn(r.value, 2);
+    const hitR = V.el("rect", { x: 0, y: top, width: W, height: rowH, fill: "transparent" }, svg);
+    const showTip = () => {
+      tip.innerHTML = `<b>${r.label}</b><br>${V.sgn(r.value, 2)} ${o.unit}` + (Number.isFinite(r.lo) ? `<br>구간 ${V.sgn(r.lo, 2)} ~ ${V.sgn(r.hi, 2)}` : "") + (r.note ? `<br>${r.note}` : "");
+      tip.style.display = "block"; tip.style.left = Math.max(0, Math.min(X(Math.max(0, r.value)) + 10, W - tip.offsetWidth - 2)) + "px";
+      tip.style.top = Math.max(0, top + rowH) + "px"; bar.setAttribute("stroke", "var(--ink)");
     };
-    bar.addEventListener("pointermove", show); bar.addEventListener("pointerleave", () => (tip.style.display = "none"));
+    hitR.addEventListener("pointerenter", showTip); hitR.addEventListener("pointermove", showTip);
+    hitR.addEventListener("pointerleave", () => { tip.style.display = "none"; bar.removeAttribute("stroke"); });
   });
-  V.el("text", { x: 0, y: 13, class: "t-title" }, svg).textContent = o.title;
 };
 
 // 연직-시간 단면 (극관 고도): v[level][day]

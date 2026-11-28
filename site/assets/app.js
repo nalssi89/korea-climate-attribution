@@ -57,15 +57,23 @@ function renderControls() {
   $("schemLink").href = `schematic/?start=${p.start}&end=${p.eff_end}`;
 }
 
+const wetCls = (z) => (!Number.isFinite(z) || Math.abs(z) < 0.5 ? "" : z > 0 ? "wet" : "dry");
 function renderSummary(P) {
   const tiles = $("tiles"); tiles.innerHTML = "";
   for (const r of P.regions) {
     const d = document.createElement("div"); d.className = "tile";
     d.innerHTML = `<div class="k">${r.name}</div><div class="v ${V.cls(r.t.value)}">${V.sgn(r.t.value, 1, "°C")}</div>` +
-      `<div class="n">${V.sgn(r.t.sigma, 1, "σ")} · 백분위 ${V.fmt(r.t.percentile, 0)} · 강수 ${V.fmt(r.p_ratio, 0)}%</div>`;
+      `<div class="n">${V.sgn(r.t.sigma, 1, "σ")} · 백분위 ${V.fmt(r.t.percentile, 0)}</div>` +
+      `<div class="tp"><span class="lab">강수</span> <b class="${wetCls(r.p.sigma)}">${V.fmt(r.p_ratio, 0)}%</b> <span class="lab">${V.sgn(r.p.sigma, 1, "σ")}</span></div>`;
     tiles.appendChild(d);
   }
-  $("sentences").innerHTML = P.sentences.map((s) => `<li>${s}</li>`).join("");
+  // 영역별 문장은 타일·표와 같은 수치라 접어 두고, 패턴·회귀·관측 검증 문장만 펼쳐 둔다
+  const names = P.regions.map((r) => r.name + ":"), isReg = (x) => names.some((n) => x.startsWith(n));
+  const reg = P.sentences.filter(isReg), rest = P.sentences.filter((x) => !isReg(x));
+  $("sentences").innerHTML = rest.map((x) => `<li>${x}</li>`).join("");
+  $("regSentences").innerHTML = reg.map((x) => `<li>${x}</li>`).join("");
+  $("regSentSum").textContent = `영역별 문장 ${reg.length}개 보기`;
+  $("regSentSum").parentElement.hidden = !reg.length;
 }
 
 function renderBars(P) {
@@ -118,13 +126,14 @@ function renderEA(P) {
   const vmax = S.eaLayer === "r2cv" ? 1 : S.eaLayer === "obs" ? V.niceMax(G.a) : V.niceMax(V.decode(E.obs).a);
   const box = [20, 55, 100, 150];
   const boxes = S.meta.regions.filter((r) => r.key !== "ea").map((r) => r.box);
-  V.drawMap($("eaMap"), { grid: G, proj: V.rect(box), vmax, reverse: S.eaVar === "tp" && S.eaLayer !== "r2cv", coast: S.coast["50m"], wrap: false, boxes, marker: [37.5, 127] });
-  V.legend($("eaLegend"), vmax, unit, S.eaVar === "tp" && S.eaLayer !== "r2cv");
+  const wd = S.eaVar === "tp" && S.eaLayer !== "r2cv" ? V.wetDry : null;
+  V.drawMap($("eaMap"), { grid: G, proj: V.rect(box), vmax, colorOf: wd, coast: S.coast["50m"], wrap: false, boxes, marker: [37.5, 127] });
+  V.legend($("eaLegend"), vmax, unit, false, 9, wd);
   $("eaNote").textContent = (S.eaLayer.startsWith("c:") ? "격자마다 같은 회귀를 적용한 인자 기여(색 범위는 관측 편차와 같다). " : "") +
-    (S.eaVar === "tp" ? "강수는 많음=파랑, 적음=빨강. " : "") + "점선 상자: 하위 영역.";
+    (S.eaVar === "tp" ? "강수는 많음 녹색, 적음 갈색(3D 모식도와 같은 색). " : "") + "점선 상자: 하위 영역.";
   V.hover($("eaMap"), $("eaTip"), (lat, lon) => { const v = V.sample(G, lat, lon, false); return Number.isFinite(v) ? `${V.llText(lat, lon)}<br>${V.sgn(v, 2, " " + unit)}` : null; });
   $("regTable").innerHTML = `<table><thead><tr><th>영역</th><th>기온</th><th>σ</th><th>백분위</th><th>강수 평년비</th><th>강수 σ</th></tr></thead><tbody>` +
-    P.regions.map((r) => `<tr><td>${r.name}</td><td class="${V.cls(r.t.value)}">${V.sgn(r.t.value, 2)}</td><td>${V.sgn(r.t.sigma, 1)}</td><td>${V.fmt(r.t.percentile, 0)}</td><td>${V.fmt(r.p_ratio, 0)}%</td><td>${V.sgn(r.p.sigma, 1)}</td></tr>`).join("") +
+    P.regions.map((r) => `<tr><td>${r.name}</td><td class="${V.cls(r.t.value)}">${V.sgn(r.t.value, 2)}</td><td>${V.sgn(r.t.sigma, 1)}</td><td>${V.fmt(r.t.percentile, 0)}</td><td class="${wetCls(r.p.sigma)}">${V.fmt(r.p_ratio, 0)}%</td><td>${V.sgn(r.p.sigma, 1)}</td></tr>`).join("") +
     "</tbody></table>";
 }
 
@@ -137,24 +146,34 @@ function bandsFor(p) {
 function sswMarks() {
   const c = S.ssw.case; return c.onset ? [{ date: c.onset, label: c.kind === "major" ? "SSW" : "부 승온" }] : [];
 }
+const fillCards = (g, n) => { g.innerHTML = ""; return Array.from({ length: n }, () => { const c = document.createElement("div"); c.className = "card"; g.appendChild(c); return c; }); };
+// 그날로 끝나는 7일 평균 (빈 날이 있으면 있는 날만, 4일 미만이면 비움)
+const mean7 = (a) => a.map((_, i) => { let t = 0, k = 0; for (let j = Math.max(0, i - 6); j <= i; j++) if (Number.isFinite(a[j])) { t += a[j]; k++; } return k >= 4 ? t / k : NaN; });
 function renderSeries() {
   const p = curPeriod(), D = S.idx, n = D.series.u1060.length, dates = [];
   const t0 = new Date(D.start + "T00:00:00Z"); for (let i = 0; i < n; i++) dates.push(new Date(t0.getTime() + i * 864e5).toISOString().slice(0, 10));
-  const g = $("tsGrid"); g.innerHTML = "";
-  const s = (k) => D.series[k] || [];
-  const specs = [
-    { title: "10 hPa 60°N 동서평균 동서풍 (m/s)", series: [{ name: "관측", values: s("u1060"), color: "var(--s1)" }, { name: "평년", values: s("u1060_clim"), color: "var(--ink-3)", dash: "4 3", width: 1.5 }], unit: "m/s" },
-    { title: "우랄 Z500 편차 (m)", series: [{ name: "우랄", values: s("ural"), color: "var(--s1)" }], unit: "m", nd: 0 },
-    { title: "AO·NAO (σ)", series: [{ name: "AO", values: s("ao"), color: "var(--s1)" }, { name: "NAO", values: s("nao"), color: "var(--s2)" }], unit: "σ" },
-    { title: "PNA·WP·EU·SCAND (σ)", series: [{ name: "PNA", values: s("pna"), color: "var(--s1)" }, { name: "WP", values: s("wp"), color: "var(--s2)" }, { name: "EU", values: s("eu"), color: "var(--s3)" }], unit: "σ" },
-    { title: "Niño3.4 해수면온도 편차 (°C)", series: [{ name: "Niño3.4", values: s("nino34"), color: "var(--s1)" }], unit: "°C" },
-    { title: "기온 편차 (°C)", series: [{ name: "한반도 ERA5", values: s("korea_t"), color: "var(--s1)" }, ...(D.series.asos_t ? [{ name: "ASOS 전국", values: s("asos_t"), color: "var(--s2)" }] : []), { name: "동아시아", values: s("ea_t"), color: "var(--s3)" }], unit: "°C" },
-    { title: "시베리아 고기압 편차 (hPa)", series: [{ name: "시베리아 고기압", values: s("siberian_high"), color: "var(--s1)" }], unit: "hPa" },
-    { title: "동아시아 제트(U200) 편차 (m/s)", series: [{ name: "제트", values: s("ea_jet"), color: "var(--s1)" }], unit: "m/s" },
+  const s = (k) => (D.series[k] || []).map((v) => (v === null ? NaN : v));
+  const C1 = "var(--s1)", C2 = "var(--s2)", C3 = "var(--s3)";
+  const impact = [
+    { title: "기온 편차 (°C)", unit: "°C", nd: 1, series: [{ name: "한반도 ERA5", values: s("korea_t"), color: C1 },
+      ...(D.series.asos_t ? [{ name: "ASOS 전국", values: s("asos_t"), color: C2 }] : []), { name: "동아시아", values: s("ea_t"), color: C3 }] },
+    { title: "강수 편차 (mm/일, 그날로 끝나는 7일 평균)", unit: "mm/일", nd: 1, series: [{ name: "한반도 ERA5", values: mean7(s("korea_p")), color: C1 },
+      ...(D.series.asos_p ? [{ name: "ASOS 전국", values: mean7(s("asos_p")), color: C2 }] : []), { name: "동아시아", values: mean7(s("ea_p")), color: C3 }] },
+    { title: "시베리아 고기압 편차 (hPa)", unit: "hPa", nd: 1, series: [{ name: "시베리아 고기압", values: s("siberian_high"), color: C1 }] },
+    { title: "동아시아 제트(U200) 편차 (m/s)", unit: "m/s", nd: 1, series: [{ name: "동아시아 제트", values: s("ea_jet"), color: C1 }] },
   ];
-  for (const sp of specs) {
-    const c = document.createElement("div"); c.className = "card chart"; g.appendChild(c);
-    V.lineChart(c, { ...sp, dates, bands: bandsFor(p), marks: sswMarks() });
+  const cause = [
+    { title: "10 hPa 60°N 동서평균 동서풍 (m/s)", unit: "m/s", nd: 1, series: [{ name: "관측", values: s("u1060"), color: C1 }, { name: "평년", values: s("u1060_clim"), color: "var(--ink-3)", dash: "5 4", width: 1.5 }] },
+    { title: "우랄 500 hPa 고도 편차 (m)", unit: "m", nd: 0, series: [{ name: "우랄 Z500", values: s("ural"), color: C1 }] },
+    { title: "북극진동·북대서양진동 (σ)", unit: "σ", nd: 2, series: [{ name: "AO", values: s("ao"), color: C1 }, { name: "NAO", values: s("nao"), color: C2 }] },
+    { title: "태평양 쪽 원격상관: PNA·WP (σ)", unit: "σ", nd: 2, series: [{ name: "PNA", values: s("pna"), color: C1 }, { name: "WP", values: s("wp"), color: C2 }] },
+    { title: "유라시아 쪽 원격상관: EU·SCAND (σ)", unit: "σ", nd: 2, series: [{ name: "EU", values: s("eu"), color: C1 }, { name: "SCAND", values: s("scand"), color: C2 }] },
+    { title: "Niño3.4 해수면온도 편차 (°C)", unit: "°C", nd: 2, series: [{ name: "Niño3.4", values: s("nino34"), color: C1 }] },
+  ];
+  // 카드를 모두 넣어 격자 칸 폭이 정해진 뒤에 그린다(그림은 그때의 실제 폭으로 그려진다)
+  for (const [id, specs] of [["tsImpact", impact], ["tsCause", cause]]) {
+    const cards = fillCards($(id), specs.length);
+    specs.forEach((sp, k) => V.lineChart(cards[k], { ...sp, dates, bands: bandsFor(p), marks: sswMarks(), group: "ts" }));
   }
   S.dates = dates;
 }
@@ -164,13 +183,14 @@ function renderSSW() {
   $("sswTitle").textContent = c.title + (c.kind === "major" ? " · 주 승온" : c.kind === "minor" ? " · 부 승온" : "");
   $("sswSent").innerHTML = c.sentences.map((x) => `<li>${x}</li>`).join("");
   const D = S.idx, dates = S.dates, s = (k) => D.series[k] || [];
-  const ch = $("sswCharts"); ch.innerHTML = "";
-  for (const sp of [
-    { title: "극관(60~90°N) 10 hPa 기온 편차 (K)", series: [{ name: "T10 극관", values: s("t10_cap_anom"), color: "var(--warm)" }], unit: "K" },
-    { title: "100 hPa 에디 열속 편차 (45~75°N, K·m/s)", series: [{ name: "[v*T*] 편차", values: s("vt100_anom"), color: "var(--s2)" }], unit: "K·m/s" },
-    { title: "10 hPa 60°N 파수 1·2 진폭 (m)", series: [{ name: "파수1", values: s("wave1"), color: "var(--s1)" }, { name: "파수2", values: s("wave2"), color: "var(--s2)" }], unit: "m", nd: 0, zero: true },
-    { title: "10 hPa 소용돌이 중심 위도 (°N)", series: [{ name: "중심 위도", values: s("vortex_lat"), color: "var(--s4)" }], unit: "°N", zero: false },
-  ]) { const d = document.createElement("div"); d.className = "card chart"; ch.appendChild(d); V.lineChart(d, { ...sp, dates, bands: bandsFor(null), marks: sswMarks() }); }
+  const sswSpecs = [
+    { title: "극관(60~90°N) 10 hPa 기온 편차 (K)", series: [{ name: "극관 T10", values: s("t10_cap_anom"), color: "var(--s1)" }], unit: "K", nd: 1 },
+    { title: "100 hPa 에디 열속 편차 (45~75°N, K·m/s)", series: [{ name: "[v*T*] 편차", values: s("vt100_anom"), color: "var(--s1)" }], unit: "K·m/s", nd: 1 },
+    { title: "10 hPa 60°N 파수 1·2 진폭 (m)", series: [{ name: "파수 1", values: s("wave1"), color: "var(--s1)" }, { name: "파수 2", values: s("wave2"), color: "var(--s2)" }], unit: "m", nd: 0, zero: true },
+    { title: "10 hPa 소용돌이 중심 위도 (°N)", series: [{ name: "중심 위도", values: s("vortex_lat"), color: "var(--s1)" }], unit: "°N", nd: 1, zero: false },
+  ];
+  const sswCards = fillCards($("sswCharts"), sswSpecs.length);
+  sswSpecs.forEach((sp, k) => V.lineChart(sswCards[k], { ...sp, dates, bands: bandsFor(null), marks: sswMarks(), group: "ssw" }));
   // 극관 고도 단면
   const P = S.ssw.pch, nl = P.levels.length, nd = P.v.length / nl, rows = [];
   for (let l = 0; l < nl; l++) rows.push(P.v.slice(l * nd, (l + 1) * nd).map((x) => (x === null ? NaN : x * 0.01)));
@@ -187,14 +207,17 @@ function renderSSW() {
   const H = c.detail && c.detail.history, hb = $("sswHist"); hb.innerHTML = "";
   if (H && H.n >= 2) {
     const lagDates = H.lags.map((l) => String(l));
-    for (const [k, ttl, unit] of [["u1060", "10 hPa 60°N 동서풍 (m/s)", "m/s"], ["ao", "북극진동 (σ)", "σ"], ["korea_t", "한반도 기온 편차 (°C, 추세 제거)", "°C"], ["ea_t", "동아시아 기온 편차 (°C, 추세 제거)", "°C"]]) {
-      const x = H.series[k]; if (!x || !x.mean) continue;
-      const d = document.createElement("div"); d.className = "card chart"; hb.appendChild(d);
-      V.lineChart(d, { title: `${ttl} · 발생일 기준 −20~+60일`, unit, dates: lagDates,
-        series: [{ name: `과거 ${H.n}건 평균`, values: x.mean, color: "var(--ink-3)" }, { name: "5~95%", values: x.lo, color: "var(--ink-3)", dash: "2 3", width: 1 },
-          { name: "", values: x.hi, color: "var(--ink-3)", dash: "2 3", width: 1 }, { name: "이번 사례", values: x.current, color: "var(--s1)", width: 2.4 }],
-        marks: [{ date: "0", label: "발생일" }], xticks: ["-20", "0", "20", "40", "60"] });
-    }
+    const hs = [["u1060", "10 hPa 60°N 동서풍 (m/s)", "m/s"], ["ao", "북극진동 (σ)", "σ"], ["korea_t", "한반도 기온 편차 (°C, 추세 제거)", "°C"], ["ea_t", "동아시아 기온 편차 (°C, 추세 제거)", "°C"]]
+      .filter(([k]) => H.series[k] && H.series[k].mean);
+    const hcards = fillCards(hb, hs.length);
+    hs.forEach(([k, ttl, unit], j) => {
+      const x = H.series[k], d = hcards[j];
+      V.lineChart(d, { title: `${ttl} · 발생일 기준 −20~+60일`, unit, dates: lagDates, nd: unit === "m/s" ? 1 : 2,
+        area: { lo: x.lo, hi: x.hi, name: "과거 5~95%" },
+        series: [{ name: `과거 ${H.n}건 평균`, values: x.mean, color: "var(--ink-2)", dash: "5 4", width: 1.6 }, { name: "이번 사례", values: x.current, color: "var(--s1)", width: 2.2 }],
+        marks: [{ date: "0", label: "발생일" }], xticks: ["-20", "0", "20", "40", "60"], group: "hist" });
+    });
+    $("sswHistTitle").hidden = false;
     const note = document.createElement("p"); note.className = "small"; note.style.gridColumn = "1/-1";
     note.textContent = `과거 사례(11~12월 주 승온): ${H.dates.join(", ")}. 가로축은 날짜가 아니라 발생일 기준 일수다. 지금은 발생 후 ${H.elapsed}일까지만 관측됐다.`;
     hb.appendChild(note);
@@ -215,7 +238,7 @@ function renderStatic() {
 <li>사건은 자료에서 탐지한다: 우랄블로킹(30~90°E 역전 지수 5일 이상), SSW(10 hPa 60°N 동풍 역전, Charlton-Polvani), 부 승온(극관 10 hPa 기온 7일 상승 ≥ 20 K 또는 극-60°N 기온 경도 역전), 소용돌이 분리/변위(10 hPa 가장자리 안쪽 조각 수).</li>
 <li>원격상관 패턴: AO는 해면기압 EOF1, 나머지는 11~3월 월평균 Z500 회전 EOF를 문헌 활동 중심과 맞춤 (${tele}).</li>
 <li>SSW의 지표 영향은 보통 발생 후 수 주~두 달에 나타난다. 발생 직후의 값은 지금까지 관측된 것이고, 과거 합성은 가능성의 범위일 뿐 예측이 아니다.</li></ul>
-<h3>실행 상태</h3><div class="tw"><table><tbody>${stRows}</tbody></table></div>`;
+<details class="more"><summary>자료 수집·실행 상태</summary><div class="tw"><table><tbody>${stRows}</tbody></table></div></details>`;
   $("footer").innerHTML = `자료: ERA5 재분석(ECMWF/Copernicus Climate Change Service, 경로: WeatherBench2·Google ARCO-ERA5·ECMWF ARCO; 최근 약 3개월은 잠정 ERA5T) · ` +
     `기상청 ASOS 일자료(기상청 API 허브, 전국 평균 편차 등 집계값만 게시) · 해안선 Natural Earth. ` +
     `이 페이지는 파이프라인(<code>python -m src.run --end YYYY-MM-DD</code>)이 만든 값만 표시한다. <a href="https://github.com/nalssi89/korea-climate-attribution">저장소</a>`;
@@ -228,13 +251,21 @@ async function update() {
   renderSummary(P); renderBars(P); renderNH(P); renderEA(P); renderSeries();
   drawing = P;
 }
-function redraw() { if (!drawing) return; renderNH(drawing); renderEA(drawing); renderSSW(); }
+function redraw() { if (!drawing) return; renderBars(drawing); renderNH(drawing); renderEA(drawing); renderSeries(); renderSSW(); }
 
 $("regionSel").onchange = (e) => { S.region = e.target.value; writeHash(); renderBars(drawing); };
 for (const b of $("varTabs").children) b.onclick = () => { S.v = b.dataset.v; for (const x of $("varTabs").children) x.className = x === b ? "on" : ""; writeHash(); renderBars(drawing); };
 for (const b of $("eaVarTabs").children) b.onclick = () => { S.eaVar = b.dataset.v; renderEA(drawing); };
 $("eaLayerSel").onchange = (e) => { S.eaLayer = e.target.value; renderEA(drawing); };
-let rt = null; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(redraw, 200); });
+// 폭이 바뀔 때만 다시 그린다(모바일에서 주소창이 접히며 높이만 바뀌는 경우는 무시)
+let rt = null, lastW = innerWidth;
+addEventListener("resize", () => { if (innerWidth === lastW) return; lastW = innerWidth; clearTimeout(rt); rt = setTimeout(redraw, 200); });
+// 목차: 지금 보이는 절을 표시
+const tocLinks = [...document.querySelectorAll(".toc a")];
+const io = new IntersectionObserver((ents) => {
+  for (const e of ents) if (e.isIntersecting) for (const a of tocLinks) a.classList.toggle("on", a.getAttribute("href") === "#" + e.target.id);
+}, { rootMargin: "-30% 0px -60% 0px" });
+for (const a of tocLinks) { const sec = document.querySelector(a.getAttribute("href")); if (sec) io.observe(sec); }
 
 (async () => {
   try {
