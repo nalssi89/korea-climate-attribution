@@ -25,6 +25,8 @@
   .lbl.sm { font-size: 11px; font-weight: 600; }
   .lbl.tag { font-size: 11.5px; font-weight: 700; color: var(--ink-2); background: color-mix(in srgb, var(--surface) 80%, transparent);
     border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; transform: translate(calc(-100% - 14px), -50%); }
+  .bar select { max-width: 100%; text-overflow: ellipsis; }
+  #playBtn.play { min-width: 3em; font-size: 1.05rem; line-height: 1; }
   .lbl.lft { transform: translate(12px, -50%); }
   .lbl.bx { background: color-mix(in srgb, var(--surface) 82%, transparent); border-radius: 5px; padding: 0 4px; text-shadow: none; }
   .stagewrap { position: relative; }
@@ -49,21 +51,7 @@
   <button type="button" id="themeBtn">테마: 시스템</button>
 </div></header>
 <main class="wrap">
-  <div class="bar" style="margin-top:14px">
-    <select id="rangeSel" aria-label="재생 구간"></select>
-    <button type="button" id="firstBtn" title="재생 구간 첫날로">⏮ 첫날</button>
-    <button type="button" id="backBtn" title="건너뛰기 단위만큼 뒤로">◀◀</button>
-    <button type="button" id="playBtn">▶ 재생</button>
-    <button type="button" id="fwdBtn" title="건너뛰기 단위만큼 앞으로">▶▶</button>
-    <button type="button" id="lastBtn" title="재생 구간 마지막 날로">끝 ⏭</button>
-    <select id="speedSel" aria-label="재생 속도"><option value="1">속도 1일/초</option><option value="3" selected>속도 3일/초</option><option value="6">속도 6일/초</option></select>
-    <select id="jumpSel" aria-label="건너뛰기 단위"><option value="1">건너뛰기 1일</option><option value="5" selected>건너뛰기 반순(5일)</option><option value="7">건너뛰기 주(7일)</option><option value="30">건너뛰기 30일</option></select>
-    <label class="small"><input type="checkbox" id="loopChk"> 반복</label>
-  </div>
-  <div class="small" id="rangeInfo" style="margin:-4px 0 6px"></div>
-  <input type="range" id="slider" min="0" max="0" value="0" aria-label="날짜" style="width:100%">
-  <div class="ticks" id="ticks"></div>
-  <div class="bar" role="group" aria-label="보일 층 고르기">
+  <div class="bar" role="group" aria-label="보일 층 고르기" style="margin-top:14px">
     <span class="small">보일 층 — 처음 누르면 그 층만, 이어서 누르면 더하기·빼기</span>
     <span class="seg">
       <button type="button" id="allBtn" aria-pressed="true">전체</button>
@@ -78,6 +66,20 @@
     <select id="gapSel" aria-label="층 간격"><option value="0.5">층 간격 좁게</option><option value="1" selected>층 간격 보통</option><option value="1.8">층 간격 넓게</option></select>
     <button type="button" id="resetBtn">시점 초기화</button>
   </div>
+  <div class="bar" role="group" aria-label="재생">
+    <select id="rangeSel" aria-label="재생 구간"></select>
+    <button type="button" id="firstBtn" title="재생 구간 첫날로">⏮ 첫날</button>
+    <button type="button" id="backBtn" title="건너뛰기 단위만큼 뒤로">◀◀</button>
+    <button type="button" id="playBtn" class="play" title="재생" aria-label="재생">▶</button>
+    <button type="button" id="fwdBtn" title="건너뛰기 단위만큼 앞으로">▶▶</button>
+    <button type="button" id="lastBtn" title="재생 구간 마지막 날로">끝 ⏭</button>
+    <select id="speedSel" aria-label="재생 속도"><option value="1">속도 1일/초</option><option value="3" selected>속도 3일/초</option><option value="6">속도 6일/초</option></select>
+    <select id="jumpSel" aria-label="건너뛰기 단위"><option value="1">건너뛰기 1일</option><option value="5" selected>건너뛰기 반순(5일)</option><option value="7">건너뛰기 주(7일)</option><option value="30">건너뛰기 30일</option></select>
+    <label class="small"><input type="checkbox" id="loopChk"> 반복</label>
+  </div>
+  <div class="small" id="rangeInfo" style="margin:-4px 0 6px"></div>
+  <input type="range" id="slider" min="0" max="0" value="0" aria-label="날짜" style="width:100%">
+  <div class="ticks" id="ticks"></div>
   <div class="stagewrap"><div class="hud" id="hud">자료 불러오는 중…</div><div id="stage"><canvas id="pchInset" role="img" aria-label="극관 고도 표준화 편차의 시간–고도 단면. 누르면 그 날짜로 이동"></canvas></div></div>
   <div class="card keys" id="keys" style="margin-top:10px"></div>
   <div class="card" style="margin-top:12px">

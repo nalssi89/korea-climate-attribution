@@ -310,7 +310,7 @@ function draw() {
   hud();
 }
 
-// --- 성층권 10 hPa: 기온 편차(면), 고도 등치선(극소용돌이 모양), 중심, 60°N 동서풍 고리
+// --- 성층권 10 hPa: 기온 편차(면), 고도 등치선(극소용돌이 모양), 중심, 60°N 동서풍(글자)
 // 평년 60°N 평균 고도로 잡던 '가장자리' 굵은 선은 그리지 않는다. 소용돌이 모양은 그날 고도 등치선으로 본다.
 function drawStrat(dark, ink, warm, cool) {
   const z10 = fine("z10", 2.25);
@@ -336,12 +336,11 @@ function drawStrat(dark, ink, warm, cool) {
   const t10 = ser("t10_cap_anom");
   if (Number.isFinite(t10) && Math.abs(t10) >= 3)
     label(`극관(60~90°N) 평균 ${V.sgn(t10, 0, " K")}`, new THREE.Vector3(0, R.strat + 0.09, 0), "strat", t10 > 0 ? warm : cool, "sm");
-  const u = ser("u1060"), ring = [];
-  for (let lo = 0; lo <= 360; lo += 4) ring.push(xyz(60, lo, R.strat + 0.003));
-  const ringCol = u >= 0 ? (dark ? 0x338ced : 0x257de0) : (dark ? 0xeb6263 : 0xc8393a);
-  groups.strat.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(ring, true), 90, 0.003 + Math.min(Math.abs(u), 60) / 60 * 0.01, 6, true),
-    new THREE.MeshBasicMaterial({ color: ringCol, transparent: true, opacity: 0.7 })));
-  label(`60°N ${u >= 0 ? "서풍" : "동풍"} ${Math.abs(u).toFixed(0)} m/s`, xyz(60, 0, R.strat + 0.04), "strat", u >= 0 ? cool : warm);
+  // 60°N 동서평균 동서풍: 고리는 그리지 않고 글자로만 (빨강 = 동풍 역전, SSW 판정 기준)
+  const u = ser("u1060");
+  // 글자는 늘 카메라 쪽 60°N 위에 둔다(loop에서 위치를 옮긴다). 다른 글자나 요약 상자에 가리지 않게
+  label(`60°N ${u >= 0 ? "서풍" : "동풍 역전"} ${Math.abs(u).toFixed(0)} m/s`, xyz(60, 0, R.strat + 0.04), "strat", u >= 0 ? cool : warm, "bx");
+  labels[labels.length - 1].follow = 60;
 }
 
 // --- 250 hPa 제트: 풍속 50 m/s 이상 영역(면)과 50 m/s 등치선(굵은 선), 70 m/s(가는 선), 축의 흐름 방향 화살표
@@ -634,7 +633,10 @@ function hud() {
 // 재생: 구간 끝에 있거나 구간 밖이면 첫날부터, 아니면 지금 날짜부터 이어서
 function playLabel() {
   const [lo, hi] = range;
-  $("playBtn").textContent = playing ? "❚❚ 정지" : T >= hi || T < lo ? "▶ 첫날부터 재생" : "▶ 이어서 재생";
+  // 단추에는 부호만, 뜻은 title·aria-label로 (마우스를 올리거나 화면 낭독기로 읽힌다)
+  const what = playing ? "정지" : T >= hi || T < lo ? "첫날부터 재생" : "이어서 재생";
+  $("playBtn").textContent = playing ? "❚❚" : "▶";
+  $("playBtn").title = what; $("playBtn").setAttribute("aria-label", what);
   $("playBtn").setAttribute("aria-pressed", playing);
 }
 function setPlay(on) {
@@ -655,7 +657,7 @@ function keys() {
   const rows = [
     ["성층권 10 hPa", divBar(), "−20 ~ +20 K",
       (t10 ? "면: 기온 편차(빨강 = 승온, 파랑 = 냉각). 숫자: ±8 K 넘는 승온·냉각 중심. " : "기온 편차 분포는 자료 준비 중이라 극관 평균값만 숫자로 보인다. ") +
-      "가는 선: 그날 고도 등치선(600 m 간격)으로, 선이 감싼 낮은 곳이 극소용돌이다. 점: 극소용돌이 중심. 60°N 고리: 동서풍(빨강 = 동풍 역전)."],
+      "가는 선: 그날 고도 등치선(600 m 간격)으로, 선이 감싼 낮은 곳이 극소용돌이다. 점: 극소용돌이 중심. '60°N 서풍/동풍' 글자: 60°N 동서평균 동서풍(빨강 = 동풍 역전, SSW 판정 기준)."],
     ["제트 250 hPa", jetBar(), `${JET_MIN} ~ ${JET_TOP}+ m/s`,
       `면: 풍속 ${JET_MIN} m/s 이상. <b>굵은 주황 선</b>: ${JET_MIN} m/s 등풍속선, 가는 보라 선: 70 m/s. 화살표: 경도 10°마다 제트 축의 바람 방향.`],
     ["500 hPa", divBar(), "−240 ~ +240 m",
@@ -733,6 +735,7 @@ function loop(ts) {
   const w = stage.clientWidth, h = stage.clientHeight, camDir = camera.position.clone().normalize();
   for (const l of labels) {
     if (!groups[l.group].visible) { l.el.style.display = "none"; continue; }
+    if (l.follow) l.pos = xyz(l.follow, cam.az / D2R, R.strat + 0.03);
     proj.copy(l.pos); if (l.off) proj.add(l.off.position); proj.project(camera);
     const behind = l.pos.clone().normalize().dot(camDir) < -0.05 && l.pos.length() < 1.4 && l.group !== "col";
     l.el.style.display = behind || proj.z > 1 ? "none" : "block";
